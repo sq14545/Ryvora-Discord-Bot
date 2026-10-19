@@ -1,9 +1,11 @@
+
 require("dotenv").config();
 
 const {
   Client,
   GatewayIntentBits,
   EmbedBuilder,
+  AttachmentBuilder,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
@@ -13,28 +15,64 @@ const {
   Events,
   REST,
   Routes,
-  SlashCommandBuilder
+  SlashCommandBuilder,
+  MessageFlags
 } = require("discord.js");
 
-// ==========================================
-// CONFIG
-// ==========================================
+const fs = require("node:fs");
+const path = require("node:path");
 
-const TOKEN = process.env.DISCORD_TOKEN;
-const CLIENT_ID = process.env.CLIENT_ID;
-const GUILD_ID = process.env.GUILD_ID;
-const TICKET_CATEGORY_ID = process.env.TICKET_CATEGORY_ID;
-const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID;
-const VERIFY_ROLE_ID = process.env.VERIFY_ROLE_ID;
-const TICKET_IMAGE_URL = process.env.TICKET_IMAGE_URL || "";
-const VERIFY_IMAGE_URL = process.env.VERIFY_IMAGE_URL || "";
+// =====================================================
+// RYVORA - ULTIMATE METHODS
+// COMPLETE DISCORD BOT
+// Welcome | Verify | Tickets | Products | Support
+// =====================================================
+
+const CONFIG = {
+  token: process.env.DISCORD_TOKEN,
+  clientId: process.env.CLIENT_ID,
+  guildId: process.env.GUILD_ID,
+  ticketCategoryId: process.env.TICKET_CATEGORY_ID,
+  staffRoleId: process.env.STAFF_ROLE_ID,
+  verifyRoleId: process.env.VERIFY_ROLE_ID,
+  welcomeChannelId: process.env.WELCOME_CHANNEL_ID || "",
+  ticketImage: process.env.TICKET_IMAGE_URL || "",
+  verifyImage: process.env.VERIFY_IMAGE_URL || "",
+  welcomeImage: process.env.WELCOME_IMAGE_URL || "",
+  color: 0x8B2CFF,
+  brand: "RYVORA",
+  fullName: "Ryvora - Ultimate Methods"
+};
 
 const NVIDIA_IMAGE_URL =
   "https://cdn.discordapp.com/attachments/1556886355768774676/1556887987533516910/46c93ffe-1c20-49d8-b247-351f9326d0db.png";
 
-// ==========================================
-// PRODUCT CATALOG
-// ==========================================
+const REQUIRED = {
+  DISCORD_TOKEN: CONFIG.token,
+  CLIENT_ID: CONFIG.clientId,
+  GUILD_ID: CONFIG.guildId,
+  TICKET_CATEGORY_ID: CONFIG.ticketCategoryId,
+  STAFF_ROLE_ID: CONFIG.staffRoleId,
+  VERIFY_ROLE_ID: CONFIG.verifyRoleId
+};
+
+for (const [key, value] of Object.entries(REQUIRED)) {
+  if (!value) {
+    console.error(`[RYVORA] Missing ${key} in .env`);
+    process.exit(1);
+  }
+}
+
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers
+  ]
+});
+
+// =====================================================
+// PRODUCT CATALOG - ORIGINAL PRICES PRESERVED
+// =====================================================
 
 const PRODUCTS = [
   {
@@ -51,7 +89,8 @@ const PRODUCTS = [
     title: "VAL Showcase",
     description:
       "Features and product information for VAL Showcase.",
-    pricing: process.env.VAL_SHOWCASE_PRICING ||
+    pricing:
+      process.env.VAL_SHOWCASE_PRICING ||
       "Contact our team for pricing."
   },
   {
@@ -114,7 +153,8 @@ const PRODUCTS = [
     title: "Retract Showcase",
     description:
       "Features and product information for Retract Showcase.",
-    pricing: process.env.RETRACT_SHOWCASE_PRICING ||
+    pricing:
+      process.env.RETRACT_SHOWCASE_PRICING ||
       "Contact our team for pricing."
   },
   {
@@ -204,7 +244,8 @@ const PRODUCTS = [
       "• PC/XBOX — 125 skins, Naruto Uzumaki, Spectra Knight, Omegarok, Lynx, Snap, Drift, Catalyst, 1550 MB413 → **$85**\n" +
       "• PC/PSN — 108 skins, Star Wand, Get Griddy, Plunja, Optimus Prime → **$65**\n\n" +
       "Need something else? Open a ticket and request more account options.",
-    pricing: "Prices are listed in the account categories above."
+    pricing:
+      "Prices are listed in the account categories above."
   },
   {
     command: "fortnite_vbucks",
@@ -217,660 +258,889 @@ const PRODUCTS = [
   }
 ];
 
-// ==========================================
-// PRODUCT EMBED
-// ==========================================
+// =====================================================
+// UTILITIES
+// =====================================================
 
-function createProductEmbed(product) {
-  const embed = new EmbedBuilder()
-    .setColor(0x6D5BFF)
-    .setTitle(`🚀 ${product.title}`)
-    .setDescription(
-      `${product.description}\n\n` +
-      `💳 **Pricing:**\n\n${product.pricing}\n\n` +
-      "To purchase or ask a question, open a ticket and choose **Purchase**."
-    )
+function log(message) {
+  console.log(`[RYVORA] ${message}`);
+}
+
+function errorLog(context, error) {
+  console.error(`[RYVORA] ${context}`, error);
+}
+
+function baseEmbed(title, description) {
+  return new EmbedBuilder()
+    .setColor(CONFIG.color)
+    .setTitle(title)
+    .setDescription(description)
     .setFooter({
-      text: `RYVORA • ${product.title}`
+      text: `${CONFIG.fullName} • Official Server`
     })
     .setTimestamp();
+}
+
+function imageAttachment(filename, attachmentName) {
+  const location = path.join(__dirname, filename);
+
+  if (!fs.existsSync(location)) return null;
+
+  return new AttachmentBuilder(location, {
+    name: attachmentName
+  });
+}
+
+function applyImage(embed, url, attachmentName) {
+  if (url && /^https?:\/\//i.test(url)) {
+    embed.setImage(url);
+  } else if (attachmentName) {
+    embed.setImage(`attachment://${attachmentName}`);
+  }
+}
+
+function getChannelByName(guild, names) {
+  return guild.channels.cache.find(channel =>
+    channel.type === ChannelType.GuildText &&
+    names.some(name =>
+      channel.name.toLowerCase() === name ||
+      channel.name.toLowerCase().endsWith(`-${name}`)
+    )
+  );
+}
+
+async function getWelcomeChannel(guild) {
+  if (CONFIG.welcomeChannelId) {
+    const channel = await guild.channels
+      .fetch(CONFIG.welcomeChannelId)
+      .catch(() => null);
+
+    if (channel && channel.isTextBased()) return channel;
+  }
+
+  await guild.channels.fetch().catch(() => null);
+
+  return getChannelByName(guild, [
+    "welcome",
+    "welcomes",
+    "👋-welcome",
+    "welcome-members"
+  ]);
+}
+
+async function getBotMember(guild) {
+  return guild.members.fetchMe();
+}
+
+async function privateReply(interaction, content) {
+  const payload = {
+    content,
+    flags: MessageFlags.Ephemeral
+  };
+
+  if (interaction.deferred) {
+    return interaction.editReply({ content });
+  }
+
+  if (interaction.replied) {
+    return interaction.followUp(payload);
+  }
+
+  return interaction.reply(payload);
+}
+
+// =====================================================
+// PRODUCT EMBEDS
+// =====================================================
+
+function createProductEmbed(product) {
+  const embed = baseEmbed(
+    `✦ ${product.title}`,
+    `${product.description}\n\n` +
+    `💳 **PRICING**\n${product.pricing}\n\n` +
+    "━━━━━━━━━━━━━━━━━━━━\n" +
+    "🛒 **Ready to order?**\n" +
+    "Open a support ticket and select **Purchase**."
+  );
 
   if (product.image) {
     embed.setImage(product.image);
   }
 
+  embed.setAuthor({
+    name: "RYVORA • PRODUCT CATALOG",
+    iconURL: client.user.displayAvatarURL()
+  });
+
   return embed;
 }
 
-// ==========================================
-// CONFIG CHECK
-// ==========================================
+// =====================================================
+// WELCOME SYSTEM
+// =====================================================
 
-console.log("====================================");
-console.log("          RYVORA DISCORD BOT");
-console.log("====================================");
+async function sendWelcome(member) {
+  const guild = member.guild;
+  const channel = await getWelcomeChannel(guild);
 
-const requiredConfig = {
-  DISCORD_TOKEN: TOKEN,
-  CLIENT_ID,
-  GUILD_ID,
-  TICKET_CATEGORY_ID,
-  STAFF_ROLE_ID,
-  VERIFY_ROLE_ID
-};
-
-for (const [name, value] of Object.entries(requiredConfig)) {
-  if (!value) {
-    console.error(`❌ Missing ${name} in .env`);
-    process.exit(1);
+  if (!channel) {
+    log("Welcome channel not found.");
+    return false;
   }
-}
 
-// ==========================================
-// CLIENT
-// ==========================================
-
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers
-  ]
-});
-
-// ==========================================
-// SLASH COMMANDS
-// ==========================================
-
-const commands = [
-  new SlashCommandBuilder()
-    .setName("setup")
-    .setDescription("Send the Ryvora ticket panel")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.Administrator
+  const welcomeEmbed = new EmbedBuilder()
+    .setColor(CONFIG.color)
+    .setAuthor({
+      name: "RYVORA • NEW MEMBER",
+      iconURL:
+        guild.iconURL() ||
+        client.user.displayAvatarURL()
+    })
+    .setTitle("✦ Welcome to Ryvora!")
+    .setDescription(
+      `Hey ${member}! 👋\n\n` +
+      `Welcome to **${CONFIG.fullName}**.\n\n` +
+      "💜 We're happy to have you here!\n" +
+      "✨ You're now part of the Ryvora community.\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━\n" +
+      "🔐 **Get Verified** — Unlock the server.\n" +
+      "🎫 **Support** — Need help? Open a ticket.\n" +
+      "🚀 **Explore** — Discover everything Ryvora offers.\n\n" +
+      `👥 **You are member #${guild.memberCount}!**`
     )
-    .toJSON(),
-
-  new SlashCommandBuilder()
-    .setName("verify")
-    .setDescription("Send the Ryvora verification panel")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.Administrator
+    .setThumbnail(
+      member.user.displayAvatarURL({
+        size: 256
+      })
     )
-    .toJSON(),
+    .setFooter({
+      text: "RYVORA • Enjoy Your Stay"
+    })
+    .setTimestamp();
 
-  ...PRODUCTS.map(product =>
-    new SlashCommandBuilder()
-      .setName(product.command)
-      .setDescription(`Post the ${product.title} product card`)
-      .setDefaultMemberPermissions(
-        PermissionFlagsBits.ManageGuild
-      )
-      .toJSON()
-  )
-];
+  const files = [];
 
-// ==========================================
-// REGISTER COMMANDS
-// ==========================================
-
-async function registerCommands() {
-  try {
-    const rest = new REST({ version: "10" }).setToken(TOKEN);
-
-    await rest.put(
-      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-      { body: commands }
+  if (CONFIG.welcomeImage) {
+    applyImage(welcomeEmbed, CONFIG.welcomeImage);
+  } else {
+    const image = imageAttachment(
+      "welcome.png",
+      "ryvora-welcome.png"
     );
 
-    console.log("✅ Slash commands registered.");
-  } catch (error) {
-    console.error("❌ Failed to register commands:", error);
+    if (image) {
+      files.push(image);
+      welcomeEmbed.setImage(
+        "attachment://ryvora-welcome.png"
+      );
+    }
   }
+
+  await channel.send({
+    content:
+      `💜 Welcome ${member} to **${CONFIG.fullName}**!`,
+    embeds: [welcomeEmbed],
+    files,
+    allowedMentions: {
+      users: [member.id],
+      roles: [],
+      parse: []
+    }
+  });
+
+  log(`Welcome sent to ${member.user.tag}`);
+  return true;
 }
 
-// ==========================================
-// GET BOT MEMBER
-// ==========================================
+client.on(Events.GuildMemberAdd, async member => {
+  if (member.guild.id !== CONFIG.guildId) return;
 
-async function getBotMember(guild) {
   try {
-    return await guild.members.fetch(client.user.id);
+    await sendWelcome(member);
   } catch (error) {
-    console.error("❌ Could not fetch bot member:", error);
-    return null;
+    errorLog("Welcome failed:", error);
   }
+});
+
+// =====================================================
+// TICKET SYSTEM
+// =====================================================
+
+const TICKET_CATEGORIES = {
+  purchase: {
+    title: "Purchase",
+    emoji: "🛒",
+    description: "Purchase a product"
+  },
+  pre_sale: {
+    title: "Pre-Sale Question",
+    emoji: "❓",
+    description: "Ask before purchasing"
+  },
+  support: {
+    title: "Support",
+    emoji: "🛠️",
+    description: "General support"
+  },
+  hwid_reset: {
+    title: "HWID Reset",
+    emoji: "🔑",
+    description: "Request an HWID reset"
+  },
+  media_reseller: {
+    title: "Media / Reseller",
+    emoji: "📦",
+    description: "Partnership inquiries"
+  }
+};
+
+function createTicketPanel() {
+  const embed = baseEmbed(
+    "🎫 RYVORA • SUPPORT CENTER",
+    "**Welcome to our official support center.**\n\n" +
+    "Our team is here to help with purchases, " +
+    "product questions, and general assistance.\n\n" +
+    "🛒 **Purchase** — Place a new order.\n" +
+    "❓ **Pre-Sale** — Ask about a product.\n" +
+    "🛠️ **Support** — Get assistance.\n" +
+    "🔑 **HWID Reset** — Request a reset.\n" +
+    "📦 **Media / Reseller** — Partnerships.\n\n" +
+    "━━━━━━━━━━━━━━━━━━━━\n" +
+    "💜 **Select an option below to open a private ticket.**"
+  );
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ryvora_ticket_category")
+    .setPlaceholder("✦ Choose a support category")
+    .addOptions(
+      Object.entries(TICKET_CATEGORIES).map(
+        ([value, category]) => ({
+          label: category.title,
+          value,
+          description: category.description,
+          emoji: category.emoji
+        })
+      )
+    );
+
+  return {
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(menu)
+    ]
+  };
 }
 
-// ==========================================
-// READY
-// ==========================================
+function createVerifyPanel() {
+  const embed = baseEmbed(
+    "🔐 RYVORA • VERIFICATION",
+    "## Welcome to Ryvora!\n\n" +
+    "Before accessing the community, please complete verification.\n\n" +
+    "✦ **Step 1** — Read the server rules.\n" +
+    "✦ **Step 2** — Click the Verify button.\n" +
+    "✦ **Step 3** — Receive your member role.\n\n" +
+    "━━━━━━━━━━━━━━━━━━━━\n" +
+    "💜 **Click below to unlock the server.**"
+  );
 
-client.once(Events.ClientReady, async readyClient => {
-  console.log(`✅ Logged in as ${readyClient.user.tag}`);
+  embed.setAuthor({
+    name: "RYVORA • OFFICIAL VERIFICATION",
+    iconURL: client.user.displayAvatarURL()
+  });
 
-  const guild = readyClient.guilds.cache.get(GUILD_ID);
+  const button = new ButtonBuilder()
+    .setCustomId("ryvora_verify")
+    .setLabel("Verify & Unlock")
+    .setEmoji("✅")
+    .setStyle(ButtonStyle.Success);
 
-  if (!guild) {
-    console.error("❌ Bot is not inside the configured GUILD_ID.");
-    return;
+  return {
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(button)
+    ]
+  };
+}
+
+function createCloseButton() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("ryvora_close_ticket")
+      .setLabel("Close Ticket")
+      .setEmoji("🔒")
+      .setStyle(ButtonStyle.Danger)
+  );
+}
+
+async function createTicket(interaction) {
+  const guild = interaction.guild;
+  const member = await guild.members.fetch(
+    interaction.user.id
+  );
+
+  const categoryKey = interaction.values[0];
+  const category = TICKET_CATEGORIES[categoryKey];
+
+  if (!category) {
+    return privateReply(
+      interaction,
+      "❌ Invalid ticket category."
+    );
   }
 
   const botMember = await getBotMember(guild);
 
-  if (!botMember) return;
-
-  const verifyRole = guild.roles.cache.get(VERIFY_ROLE_ID);
-  const staffRole = guild.roles.cache.get(STAFF_ROLE_ID);
-  const ticketCategory = guild.channels.cache.get(TICKET_CATEGORY_ID);
-
-  if (!verifyRole) {
-    console.error(`❌ Invalid VERIFY_ROLE_ID: ${VERIFY_ROLE_ID}`);
-  } else if (
-    botMember.roles.highest.position <= verifyRole.position
-  ) {
-    console.error("❌ Move the bot role above the Verify role.");
-  } else {
-    console.log(`✅ Verify role found: ${verifyRole.name}`);
+  if (!botMember.permissions.has(
+    PermissionFlagsBits.ManageChannels
+  )) {
+    return privateReply(
+      interaction,
+      "❌ The bot needs Manage Channels permission."
+    );
   }
+
+  const parent = await guild.channels
+    .fetch(CONFIG.ticketCategoryId)
+    .catch(() => null);
+
+  if (!parent || parent.type !== ChannelType.GuildCategory) {
+    return privateReply(
+      interaction,
+      "❌ Ticket category is not configured correctly."
+    );
+  }
+
+  const staffRole = await guild.roles
+    .fetch(CONFIG.staffRoleId)
+    .catch(() => null);
 
   if (!staffRole) {
-    console.error(`❌ Invalid STAFF_ROLE_ID: ${STAFF_ROLE_ID}`);
-  } else {
-    console.log(`✅ Staff role found: ${staffRole.name}`);
-  }
-
-  if (!ticketCategory) {
-    console.error(
-      `❌ Invalid TICKET_CATEGORY_ID: ${TICKET_CATEGORY_ID}`
+    return privateReply(
+      interaction,
+      "❌ Staff role was not found."
     );
-  } else if (ticketCategory.type !== ChannelType.GuildCategory) {
-    console.error("❌ TICKET_CATEGORY_ID must be a category.");
-  } else {
-    console.log(`✅ Ticket category found: ${ticketCategory.name}`);
   }
 
-  await registerCommands();
-});
+  await interaction.deferReply({
+    flags: MessageFlags.Ephemeral
+  });
 
-// ==========================================
-// INTERACTIONS
-// ==========================================
+  // Prevent duplicate tickets in this category.
+  await guild.channels.fetch();
+
+  const existing = guild.channels.cache.find(channel =>
+    channel.type === ChannelType.GuildText &&
+    channel.parentId === CONFIG.ticketCategoryId &&
+    channel.topic === `ticket-owner:${member.id}`
+  );
+
+  if (existing) {
+    return interaction.editReply({
+      content:
+        `⚠️ You already have an open ticket: ${existing}`
+    });
+  }
+
+  const channel = await guild.channels.create({
+    name: `ticket-${categoryKey}-${member.id}`,
+    type: ChannelType.GuildText,
+    parent: CONFIG.ticketCategoryId,
+    topic: `ticket-owner:${member.id}`,
+    reason: `Ryvora ticket opened by ${member.user.tag}`,
+    permissionOverwrites: [
+      {
+        id: guild.roles.everyone.id,
+        deny: [PermissionFlagsBits.ViewChannel]
+      },
+      {
+        id: member.id,
+        allow: [
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.SendMessages,
+          PermissionFlagsBits.ReadMessageHistory,
+          PermissionFlagsBits.AttachFiles
+        ]
+      },
+      {
+        id: CONFIG.staffRoleId,
+        allow: [
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.SendMessages,
+          PermissionFlagsBits.ReadMessageHistory,
+          PermissionFlagsBits.AttachFiles
+        ]
+      },
+      {
+        id: client.user.id,
+        allow: [
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.SendMessages,
+          PermissionFlagsBits.ReadMessageHistory,
+          PermissionFlagsBits.ManageChannels
+        ]
+      }
+    ]
+  });
+
+  const embed = baseEmbed(
+    `${category.emoji} RYVORA • ${category.title}`,
+    `Welcome ${member}!\n\n` +
+    `**Ticket Category:** ${category.title}\n\n` +
+    "Your private support ticket has been created.\n" +
+    "Please describe your request clearly.\n\n" +
+    "A member of our team will assist you as soon as possible.\n\n" +
+    "━━━━━━━━━━━━━━━━━━━━\n" +
+    "🔒 Click **Close Ticket** when finished."
+  );
+
+  await channel.send({
+    content: `<@${member.id}> <@&${CONFIG.staffRoleId}>`,
+    embeds: [embed],
+    components: [createCloseButton()],
+    allowedMentions: {
+      users: [member.id],
+      roles: [CONFIG.staffRoleId]
+    }
+  });
+
+  await interaction.editReply({
+    content: `✅ Ticket created successfully: ${channel}`
+  });
+
+  log(`Ticket created: ${channel.name}`);
+}
+
+async function closeTicket(interaction) {
+  const channel = interaction.channel;
+  const guild = interaction.guild;
+
+  if (
+    !channel ||
+    channel.type !== ChannelType.GuildText ||
+    channel.parentId !== CONFIG.ticketCategoryId ||
+    !channel.topic?.startsWith("ticket-owner:")
+  ) {
+    return privateReply(
+      interaction,
+      "❌ This is not a valid Ryvora ticket."
+    );
+  }
+
+  const member = await guild.members.fetch(
+    interaction.user.id
+  );
+
+  const ownerId = channel.topic.split(":")[1];
+
+  const isOwner = ownerId === member.id;
+  const isStaff = member.roles.cache.has(
+    CONFIG.staffRoleId
+  );
+
+  const canManage = member.permissions.has(
+    PermissionFlagsBits.ManageChannels
+  );
+
+  if (!isOwner && !isStaff && !canManage) {
+    return privateReply(
+      interaction,
+      "❌ Only the ticket owner or staff can close this ticket."
+    );
+  }
+
+  await interaction.reply({
+    embeds: [
+      baseEmbed(
+        "🔒 Ticket Closing",
+        "This support ticket will close in **5 seconds**.\n\n" +
+        "Thank you for contacting Ryvora Support."
+      )
+    ]
+  });
+
+  setTimeout(async () => {
+    try {
+      await channel.delete(
+        `Ticket closed by ${interaction.user.tag}`
+      );
+      log(`Ticket closed: ${channel.name}`);
+    } catch (error) {
+      errorLog("Ticket close failed:", error);
+    }
+  }, 5000);
+}
+
+// =====================================================
+// VERIFICATION HANDLER
+// =====================================================
+
+async function verifyMember(interaction) {
+  const guild = interaction.guild;
+
+  const member = await guild.members.fetch(
+    interaction.user.id
+  );
+
+  const role = await guild.roles
+    .fetch(CONFIG.verifyRoleId)
+    .catch(() => null);
+
+  const botMember = await getBotMember(guild);
+
+  if (!role) {
+    return privateReply(
+      interaction,
+      "❌ Verification role not found."
+    );
+  }
+
+  if (!botMember.permissions.has(
+    PermissionFlagsBits.ManageRoles
+  )) {
+    return privateReply(
+      interaction,
+      "❌ Bot needs Manage Roles permission."
+    );
+  }
+
+  if (botMember.roles.highest.position <= role.position) {
+    return privateReply(
+      interaction,
+      "❌ Move the bot role above the Verify role."
+    );
+  }
+
+  if (member.roles.cache.has(role.id)) {
+    return privateReply(
+      interaction,
+      "💜 You're already verified!"
+    );
+  }
+
+  await interaction.deferReply({
+    flags: MessageFlags.Ephemeral
+  });
+
+  await member.roles.add(
+    role,
+    "Ryvora member verification"
+  );
+
+  await interaction.editReply({
+    content:
+      "✅ **Verification Successful!**\n\n" +
+      "Welcome to Ryvora! You now have access to the server. 💜"
+  });
+
+  log(`Verified: ${member.user.tag}`);
+}
+
+// =====================================================
+// SLASH COMMAND REGISTRATION
+// =====================================================
+
+const commands = [
+  new SlashCommandBuilder()
+    .setName("setup")
+    .setDescription("Post the Ryvora support panel")
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.Administrator
+    ),
+
+  new SlashCommandBuilder()
+    .setName("verify")
+    .setDescription("Post the Ryvora verification panel")
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.Administrator
+    ),
+
+  new SlashCommandBuilder()
+    .setName("welcome-test")
+    .setDescription("Preview your Ryvora welcome message")
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.Administrator
+    ),
+
+  ...PRODUCTS.map(product =>
+    new SlashCommandBuilder()
+      .setName(product.command)
+      .setDescription(
+        `Post the ${product.title} product card`
+      )
+      .setDefaultMemberPermissions(
+        PermissionFlagsBits.ManageGuild
+      )
+  )
+].map(command => command.toJSON());
+
+async function registerCommands() {
+  const rest = new REST({
+    version: "10"
+  }).setToken(CONFIG.token);
+
+  await rest.put(
+    Routes.applicationGuildCommands(
+      CONFIG.clientId,
+      CONFIG.guildId
+    ),
+    { body: commands }
+  );
+
+  log(`${commands.length} slash commands registered.`);
+}
+
+// =====================================================
+// COMMAND HANDLERS
+// =====================================================
+
+async function sendPanel(interaction, type) {
+  await interaction.deferReply({
+    flags: MessageFlags.Ephemeral
+  });
+
+  const payload =
+    type === "ticket"
+      ? createTicketPanel()
+      : createVerifyPanel();
+
+  const imageUrl =
+    type === "ticket"
+      ? CONFIG.ticketImage
+      : CONFIG.verifyImage;
+
+  const localName =
+    type === "ticket"
+      ? "ticket.png"
+      : "verify.png";
+
+  const attachmentName =
+    type === "ticket"
+      ? "ryvora-ticket.png"
+      : "ryvora-verify.png";
+
+  if (imageUrl) {
+    applyImage(payload.embeds[0], imageUrl);
+  } else {
+    const attachment = imageAttachment(
+      localName,
+      attachmentName
+    );
+
+    if (attachment) {
+      payload.files = [attachment];
+      payload.embeds[0].setImage(
+        `attachment://${attachmentName}`
+      );
+    }
+  }
+
+  await interaction.channel.send(payload);
+
+  await interaction.editReply({
+    content:
+      `✅ ${type === "ticket" ? "Ticket" : "Verification"} panel posted successfully.`
+  });
+}
+
+async function postProduct(interaction, product) {
+  await interaction.deferReply({
+    flags: MessageFlags.Ephemeral
+  });
+
+  await interaction.channel.send({
+    embeds: [createProductEmbed(product)]
+  });
+
+  await interaction.editReply({
+    content:
+      `✅ ${product.title} product card posted successfully.`
+  });
+}
 
 client.on(Events.InteractionCreate, async interaction => {
   try {
-    // --------------------------------------
-    // PRODUCT COMMANDS
-    // --------------------------------------
+    if (!interaction.guild) return;
+
+    if (interaction.guild.id !== CONFIG.guildId) {
+      return;
+    }
 
     if (interaction.isChatInputCommand()) {
+      const name = interaction.commandName;
+
+      if (name === "setup") {
+        return await sendPanel(interaction, "ticket");
+      }
+
+      if (name === "verify") {
+        return await sendPanel(interaction, "verify");
+      }
+
+      if (name === "welcome-test") {
+        await interaction.deferReply({
+          flags: MessageFlags.Ephemeral
+        });
+
+        const member = await interaction.guild.members.fetch(
+          interaction.user.id
+        );
+
+        const sent = await sendWelcome(member);
+
+        return interaction.editReply({
+          content: sent
+            ? "✅ Welcome preview sent to the welcome channel."
+            : "❌ Welcome channel not found. Configure WELCOME_CHANNEL_ID or create a channel named welcome."
+        });
+      }
+
       const product = PRODUCTS.find(
-        item => item.command === interaction.commandName
+        item => item.command === name
       );
 
       if (product) {
-        if (!interaction.channel) {
-          return interaction.reply({
-            content: "Could not find this channel.",
-            ephemeral: true
-          });
-        }
-
-        await interaction.channel.send({
-          embeds: [createProductEmbed(product)]
-        });
-
-        await interaction.reply({
-          content: `✅ ${product.title} product card posted.`,
-          ephemeral: true
-        });
-
-        return;
+        return await postProduct(interaction, product);
       }
     }
 
-    // --------------------------------------
-    // /SETUP — TICKET PANEL
-    // --------------------------------------
-
-    if (
-      interaction.isChatInputCommand() &&
-      interaction.commandName === "setup"
-    ) {
-      const ticketEmbed = new EmbedBuilder()
-        .setColor(0x7B2CFF)
-        .setTitle("Ryvora Support")
-        .setDescription(
-          "**How Do I Purchase?**\n" +
-          "Press the menu below and choose the option that fits your needs.\n\n" +
-          "**Payment Methods Accepted:**\n" +
-          "Contact our team for the currently available payment methods."
-        )
-        .setFooter({ text: "Ryvora • Ticket Support" });
-
-      if (TICKET_IMAGE_URL) {
-        ticketEmbed.setImage(TICKET_IMAGE_URL);
+    if (interaction.isButton()) {
+      if (interaction.customId === "ryvora_verify") {
+        return await verifyMember(interaction);
       }
 
-      const ticketMenu = new StringSelectMenuBuilder()
-        .setCustomId("ryvora_ticket_category")
-        .setPlaceholder("Choose a ticket category")
-        .addOptions(
-          {
-            label: "Purchase",
-            description: "Questions about purchasing",
-            value: "purchase",
-            emoji: "🛒"
-          },
-          {
-            label: "Pre-Sale Question",
-            description: "Ask before purchasing",
-            value: "pre_sale",
-            emoji: "❓"
-          },
-          {
-            label: "Support",
-            description: "General support",
-            value: "support",
-            emoji: "👤"
-          },
-          {
-            label: "HWID Reset",
-            description: "Request an HWID reset",
-            value: "hwid_reset",
-            emoji: "🔑"
-          },
-          {
-            label: "Media/Reseller",
-            description: "Media or reseller inquiries",
-            value: "media_reseller",
-            emoji: "📦"
-          }
-        );
-
-      await interaction.channel.send({
-        embeds: [ticketEmbed],
-        components: [
-          new ActionRowBuilder().addComponents(ticketMenu)
-        ]
-      });
-
-      await interaction.reply({
-        content: "✅ Ticket panel sent successfully.",
-        ephemeral: true
-      });
-
-      return;
+      if (interaction.customId === "ryvora_close_ticket") {
+        return await closeTicket(interaction);
+      }
     }
 
-    
-    // --------------------------------------
-    // /VERIFY — VERIFICATION PANEL
-    // --------------------------------------
-
-    if (
-      interaction.isChatInputCommand() &&
-      interaction.commandName === "verify"
-    ) {
-      await interaction.deferReply({ ephemeral: true });
-
-      try {
-        const verifyImageUrl = process.env.VERIFY_IMAGE_URL;
-
-        const verifyEmbed = new EmbedBuilder()
-          .setColor(0x8B2CFF)
-          .setAuthor({
-            name: "RYVORA",
-            iconURL: interaction.client.user.displayAvatarURL()
-          })
-          .setTitle("👋 Welcome to RYVORA!")
-          .setDescription(
-            "## Verify To Access RYVORA!\n\n" +
-            "Before you can access the server, you must receive " +
-            "roles by pressing the **Verify** button below.\n\n" +
-            "Once you verify, you'll receive your member roles " +
-            "and unlock the rest of the server.\n\n" +
-            "Before getting started, make sure to read the " +
-            "**Server Rules & Hопout Rules**. You can also grab " +
-            "extra roles and check the FAQ if you have any questions.\n\n" +
-            "**Press the Verify button below to get verified and " +
-            "gain access to RYVORA.**"
-          )
-          .setFooter({
-            text: "RYVORA • Verification"
-          });
-
-        // Only use a direct image URL, such as a Discord CDN URL.
-        if (
-          verifyImageUrl &&
-          /^https?:\/\/\S+\.(png|jpe?g|gif|webp)(\?\S*)?$/i.test(
-            verifyImageUrl
-          )
-        ) {
-          verifyEmbed.setThumbnail(verifyImageUrl);
-          verifyEmbed.setImage(verifyImageUrl);
-        }
-
-        const verifyButton = new ButtonBuilder()
-          .setCustomId("ryvora_verify")
-          .setLabel("Verify")
-          .setEmoji("✅")
-          .setStyle(ButtonStyle.Success);
-
-        await interaction.channel.send({
-          embeds: [verifyEmbed],
-          components: [
-            new ActionRowBuilder().addComponents(verifyButton)
-          ]
-        });
-
-        await interaction.editReply(
-          "✅ Verification panel sent successfully."
-        );
-      } catch (error) {
-        console.error(
-          "VERIFY PANEL ERROR:",
-          JSON.stringify(
-            error.rawError || {
-              message: error.message,
-              code: error.code
-            },
-            null,
-            2
-          )
-        );
-
-        await interaction.editReply(
-          "❌ Failed to send verification panel. Check the console for details."
-        );
-      }
-
-      return;
-    }
-
-    // --------------------------------------
-    // VERIFY BUTTON
-    // --------------------------------------
-
-    if (
-      interaction.isButton() &&
-      interaction.customId === "ryvora_verify"
-    ) {
-      const guild = interaction.guild;
-      const member = interaction.member;
-
-      if (!guild || !member) {
-        return interaction.reply({
-          content: "❌ Could not find the server/member.",
-          ephemeral: true
-        });
-      }
-
-      const botMember = await getBotMember(guild);
-      const verifyRole = guild.roles.cache.get(VERIFY_ROLE_ID);
-
-      if (!botMember || !verifyRole) {
-        return interaction.reply({
-          content: "❌ The bot member or Verify role could not be found.",
-          ephemeral: true
-        });
-      }
-
-      if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
-        return interaction.reply({
-          content: "❌ The bot needs the Manage Roles permission.",
-          ephemeral: true
-        });
-      }
-
-      if (botMember.roles.highest.position <= verifyRole.position) {
-        return interaction.reply({
-          content: "❌ Move the bot's highest role above the Verify role.",
-          ephemeral: true
-        });
-      }
-
-      if (member.roles.cache.has(VERIFY_ROLE_ID)) {
-        return interaction.reply({
-          content: "You are already verified.",
-          ephemeral: true
-        });
-      }
-
-      await interaction.deferReply({ ephemeral: true });
-
-      try {
-        await member.roles.add(verifyRole, "Ryvora verification");
-
-        await interaction.editReply(
-          "✅ You have been successfully verified!"
-        );
-      } catch (error) {
-        console.error("Verify error:", error);
-
-        await interaction.editReply(
-          `❌ Verification failed: ${error.message}`
-        );
-      }
-
-      return;
-    }
-
-    // --------------------------------------
-    // CREATE TICKET
-    // --------------------------------------
-
-    if (
-      interaction.isStringSelectMenu() &&
-      interaction.customId === "ryvora_ticket_category"
-    ) {
-      const guild = interaction.guild;
-      const member = interaction.member;
-
-      if (!guild || !member) {
-        return interaction.reply({
-          content: "❌ Could not find the server/member.",
-          ephemeral: true
-        });
-      }
-
-      const botMember = await getBotMember(guild);
-
+    if (interaction.isStringSelectMenu()) {
       if (
-        !botMember ||
-        !botMember.permissions.has(PermissionFlagsBits.ManageChannels)
+        interaction.customId === "ryvora_ticket_category"
       ) {
-        return interaction.reply({
-          content: "❌ The bot needs the Manage Channels permission.",
-          ephemeral: true
-        });
+        return await createTicket(interaction);
       }
-
-      const ticketCategory = guild.channels.cache.get(TICKET_CATEGORY_ID);
-      const staffRole = guild.roles.cache.get(STAFF_ROLE_ID);
-
-      if (
-        !ticketCategory ||
-        ticketCategory.type !== ChannelType.GuildCategory
-      ) {
-        return interaction.reply({
-          content: "❌ The configured ticket category is invalid.",
-          ephemeral: true
-        });
-      }
-
-      if (!staffRole) {
-        return interaction.reply({
-          content: "❌ The configured staff role could not be found.",
-          ephemeral: true
-        });
-      }
-
-      const selectedCategory = interaction.values[0];
-
-      const categoryNames = {
-        purchase: "Purchase",
-        pre_sale: "Pre-Sale Question",
-        support: "Support",
-        hwid_reset: "HWID Reset",
-        media_reseller: "Media/Reseller"
-      };
-
-      const categoryName =
-        categoryNames[selectedCategory] || "Support";
-
-      const existingTicket = guild.channels.cache.find(
-        channel =>
-          channel.type === ChannelType.GuildText &&
-          channel.parentId === TICKET_CATEGORY_ID &&
-          channel.topic === `ticket-owner:${member.id}`
-      );
-
-      if (existingTicket) {
-        return interaction.reply({
-          content: `You already have an open ticket: ${existingTicket}`,
-          ephemeral: true
-        });
-      }
-
-      await interaction.deferReply({ ephemeral: true });
-
-      try {
-        const ticketChannel = await guild.channels.create({
-          name: `ticket-${selectedCategory}-${member.id}`,
-          type: ChannelType.GuildText,
-          parent: TICKET_CATEGORY_ID,
-          topic: `ticket-owner:${member.id}`,
-          permissionOverwrites: [
-            {
-              id: guild.roles.everyone.id,
-              deny: [PermissionFlagsBits.ViewChannel]
-            },
-            {
-              id: member.id,
-              allow: [
-                PermissionFlagsBits.ViewChannel,
-                PermissionFlagsBits.SendMessages,
-                PermissionFlagsBits.ReadMessageHistory
-              ]
-            },
-            {
-              id: STAFF_ROLE_ID,
-              allow: [
-                PermissionFlagsBits.ViewChannel,
-                PermissionFlagsBits.SendMessages,
-                PermissionFlagsBits.ReadMessageHistory
-              ]
-            }
-          ]
-        });
-
-        const ticketEmbed = new EmbedBuilder()
-          .setColor(0x7B2CFF)
-          .setTitle("🎫 Ryvora Support")
-          .setDescription(
-            `Hello ${member} 👋\n\n` +
-            `**Category:** ${categoryName}\n\n` +
-            "Your ticket has been created successfully.\n" +
-            "A member of our support team will assist you shortly.\n\n" +
-            "Use the button below to close the ticket."
-          )
-          .setFooter({ text: "Ryvora Support" });
-
-        const closeButton = new ButtonBuilder()
-          .setCustomId("ryvora_close_ticket")
-          .setLabel("Close Ticket")
-          .setEmoji("🔒")
-          .setStyle(ButtonStyle.Danger);
-
-        await ticketChannel.send({
-          content: `<@${member.id}> <@&${STAFF_ROLE_ID}>`,
-          embeds: [ticketEmbed],
-          components: [
-            new ActionRowBuilder().addComponents(closeButton)
-          ]
-        });
-
-        await interaction.editReply(
-          `✅ Your ${categoryName} ticket has been created: ${ticketChannel}`
-        );
-      } catch (error) {
-        console.error("Ticket creation error:", error);
-
-        await interaction.editReply(
-          `❌ Ticket creation failed: ${error.message}`
-        );
-      }
-
-      return;
-    }
-
-    // --------------------------------------
-    // CLOSE TICKET
-    // --------------------------------------
-
-    if (
-      interaction.isButton() &&
-      interaction.customId === "ryvora_close_ticket"
-    ) {
-      const channel = interaction.channel;
-      const member = interaction.member;
-
-      if (
-        !channel ||
-        channel.type !== ChannelType.GuildText ||
-        !channel.name.startsWith("ticket-")
-      ) {
-        return interaction.reply({
-          content: "This button only works inside a ticket.",
-          ephemeral: true
-        });
-      }
-
-      const isStaff = member.roles.cache.has(STAFF_ROLE_ID);
-      const isOwner =
-        channel.topic === `ticket-owner:${member.id}`;
-
-      if (!isStaff && !isOwner) {
-        return interaction.reply({
-          content: "Only the ticket owner or staff can close this ticket.",
-          ephemeral: true
-        });
-      }
-
-      await interaction.reply({
-        content: "🔒 This ticket will be closed in 5 seconds."
-      });
-
-      setTimeout(async () => {
-        try {
-          await channel.delete("Ryvora ticket closed");
-        } catch (error) {
-          console.error("Failed to delete ticket:", error);
-        }
-      }, 5000);
-
-      return;
     }
   } catch (error) {
-    console.error("Interaction error:", error);
+    errorLog("Interaction error:", error);
 
-    if (!interaction.replied && !interaction.deferred) {
-      try {
-        await interaction.reply({
-          content: `❌ An unexpected error occurred: ${error.message}`,
-          ephemeral: true
-        });
-      } catch (replyError) {
-        console.error("Could not send error reply:", replyError);
-      }
+    try {
+      await privateReply(
+        interaction,
+        "❌ An unexpected error occurred. Please contact staff."
+      );
+    } catch (replyError) {
+      errorLog("Could not reply to interaction:", replyError);
     }
   }
 });
 
-// ==========================================
-// LOGIN
-// ==========================================
+// =====================================================
+// READY EVENT
+// =====================================================
 
-client.login(TOKEN).catch(error => {
-  console.error("❌ Failed to log in to Discord:", error);
+client.once(Events.ClientReady, async readyClient => {
+  console.log("");
+  console.log("╔════════════════════════════════════╗");
+  console.log("║       RYVORA ULTIMATE METHODS      ║");
+  console.log("║         DISCORD BOT ONLINE         ║");
+  console.log("╚════════════════════════════════════╝");
+  console.log("");
+
+  log(`Logged in as ${readyClient.user.tag}`);
+
+  const guild = await client.guilds
+    .fetch(CONFIG.guildId)
+    .catch(() => null);
+
+  if (!guild) {
+    errorLog("Configured server was not found.");
+    return;
+  }
+
+  await guild.channels.fetch().catch(() => null);
+  await guild.roles.fetch().catch(() => null);
+
+  log(`Server: ${guild.name}`);
+
+  try {
+    const botMember = await getBotMember(guild);
+
+    const verifyRole = guild.roles.cache.get(
+      CONFIG.verifyRoleId
+    );
+
+    const staffRole = guild.roles.cache.get(
+      CONFIG.staffRoleId
+    );
+
+    const category = guild.channels.cache.get(
+      CONFIG.ticketCategoryId
+    );
+
+    if (!verifyRole) {
+      log("WARNING: Verify role not found.");
+    } else if (
+      botMember.roles.highest.position <=
+      verifyRole.position
+    ) {
+      log("WARNING: Bot role must be above Verify role.");
+    } else {
+      log(`Verify role: ${verifyRole.name}`);
+    }
+
+    if (!staffRole) {
+      log("WARNING: Staff role not found.");
+    } else {
+      log(`Staff role: ${staffRole.name}`);
+    }
+
+    if (
+      !category ||
+      category.type !== ChannelType.GuildCategory
+    ) {
+      log("WARNING: Ticket category invalid.");
+    } else {
+      log(`Ticket category: ${category.name}`);
+    }
+
+    const welcomeChannel = await getWelcomeChannel(guild);
+
+    if (welcomeChannel) {
+      log(`Welcome channel: ${welcomeChannel.name}`);
+    } else {
+      log("WARNING: Welcome channel not configured.");
+    }
+
+    await registerCommands();
+
+    log("Welcome system initialized.");
+    log("Verification system initialized.");
+    log("Ticket system initialized.");
+    log(`Product catalog: ${PRODUCTS.length} products.`);
+    log("All systems ready.");
+
+  } catch (error) {
+    errorLog("Startup configuration error:", error);
+  }
+});
+
+// =====================================================
+// ERROR HANDLING
+// =====================================================
+
+client.on(Events.Error, error => {
+  errorLog("Discord client error:", error);
+});
+
+process.on("unhandledRejection", error => {
+  errorLog("Unhandled rejection:", error);
+});
+
+// =====================================================
+// LOGIN
+// =====================================================
+
+client.login(CONFIG.token).catch(error => {
+  errorLog("Discord login failed:", error);
+  process.exitCode = 1;
 });
