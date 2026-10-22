@@ -30,13 +30,16 @@ const CONFIG = {
   staffRoleId: process.env.STAFF_ROLE_ID,
   verifyRoleId: process.env.VERIFY_ROLE_ID,
   welcomeChannelId: process.env.WELCOME_CHANNEL_ID || "",
-  ticketImage: process.env.TICKET_IMAGE_URL || "",
-  verifyImage: process.env.VERIFY_IMAGE_URL || "",
-  welcomeImage: process.env.WELCOME_IMAGE_URL || "",
   giveawayChannelId: process.env.GIVEAWAY_CHANNEL_ID || "",
-  color: 0x8B2CFF,
+  inviteLogChannelId: process.env.INVITE_LOG_CHANNEL_ID || "",
+  ticketLogChannelId: process.env.TICKET_LOG_CHANNEL_ID || "",
+  verifyLogChannelId: process.env.VERIFY_LOG_CHANNEL_ID || "",
   brand: "RYVORA",
-  fullName: "Ryvora - Ultimate Methods"
+  fullName: "Ryvora - Ultimate Methods",
+  color: 0x8B2CFF,
+  success: 0x57F287,
+  warning: 0xFEE75C,
+  danger: 0xED4245
 };
 
 for (const key of [
@@ -60,18 +63,91 @@ const client = new Client({
   ]
 });
 
+const DATA_FILE = path.join(__dirname, "ryvora-invites.json");
+const STATE_FILE = path.join(__dirname, "ryvora-state.json");
+
+const DAY = 86400000;
+const log = (...args) => console.log("[RYVORA]", ...args);
+const errorLog = (...args) => console.error("[RYVORA]", ...args);
+
+// =====================================================
+// IMAGES
+// =====================================================
+
+const IMAGES = {
+  ticket: "ticket.png",
+  verify: "verify.png",
+  welcome: "welcome.png",
+  giveaway: "giveaway.png",
+  leaderboard: "leaderboard.png",
+  inviteLog: "invite-log.png",
+
+  ticketPurchase: "ticket-purchase.png",
+  ticketPreSale: "ticket-pre-sale.png",
+  ticketSupport: "ticket-support.png",
+  ticketHwid: "ticket-hwid.png",
+  ticketMedia: "ticket-media.png",
+
+  products: {
+    perm_croofer: "perm-croofer.png",
+    val_showcase: "val-showcase.png",
+    val_color_aim: "val-color-aim.png",
+    val_triggerbot: "val-triggerbot.png",
+    val_unlock_all: "val-unlock-all.png",
+    val_emu: "val-emu.png",
+    fn_retract: "fn-retract.png",
+    retract_showcase: "retract-showcase.png",
+    rust_external: "rust-external.png",
+    fivem_triggerbot: "fivem-triggerbot.png",
+    nvidia_bypass: "nvidia-bypass.png",
+    custom_cleaners: "custom-cleaners.png",
+    tweaks: "tweaks.png",
+    fortnite_accounts: "fortnite-accounts.png",
+    fortnite_vbucks: "fortnite-vbucks.png"
+  }
+};
+
+function attachImage(embed, imageKey, filename) {
+  const envKey = `IMAGE_${imageKey.toUpperCase()}`;
+  const url = process.env[envKey];
+
+  if (url && /^https?:\/\//i.test(url)) {
+    embed.setImage(url);
+    return [];
+  }
+
+  const file = path.join(__dirname, "images", filename);
+
+  if (!fs.existsSync(file)) return [];
+
+  const attachmentName = path.basename(filename);
+
+  embed.setImage(`attachment://${attachmentName}`);
+
+  return [
+    new AttachmentBuilder(file, {
+      name: attachmentName
+    })
+  ];
+}
+
+// =====================================================
+// PRODUCTS - ORIGINAL CATALOG
+// =====================================================
+
 const PRODUCTS = [
   {
     command: "perm_croofer",
     title: "Perm Serial Changer",
-    description: "View the features and details of Perm Serial Changer below.",
+    description: "Permanent serial changer product information.",
     pricing: "• One Time Use → 24€\n• Unlimited Uses → **49€**"
   },
   {
     command: "val_showcase",
     title: "VAL Showcase",
     description: "Features and product information for VAL Showcase.",
-    pricing: process.env.VAL_SHOWCASE_PRICING || "Contact our team for pricing."
+    pricing: process.env.VAL_SHOWCASE_PRICING ||
+      "Contact our team for pricing."
   },
   {
     command: "val_color_aim",
@@ -107,7 +183,8 @@ const PRODUCTS = [
     command: "retract_showcase",
     title: "Retract Showcase",
     description: "Features and product information for Retract Showcase.",
-    pricing: process.env.RETRACT_SHOWCASE_PRICING || "Contact our team for pricing."
+    pricing: process.env.RETRACT_SHOWCASE_PRICING ||
+      "Contact our team for pricing."
   },
   {
     command: "rust_external",
@@ -128,33 +205,31 @@ const PRODUCTS = [
       "NVIDIA Bypass is intended for users who already have a hider and compatible NVIDIA stream-proof software.\n\n" +
       "It allows a regular black NVIDIA setting/profile to be used without appearing completely black in recordings.\n\n" +
       "This is not a bypass that makes cheats such as TZX or other cheats stream-proof.",
-    pricing: "• NVIDIA Bypass → **$10**\n• NVIDIA Bypass + Mouse → **$15**",
-    image: "https://cdn.discordapp.com/attachments/1556886355768774676/1556887987533516910/46c93ffe-1c20-49d8-b247-351f9326d0db.png"
+    pricing: "• NVIDIA Bypass → **$10**\n• NVIDIA Bypass + Mouse → **$15**"
   },
   {
     command: "custom_cleaners",
     title: "Custom Cleaners",
     description:
       "🧹 **Custom Cleaner Service**\n\n" +
-      "Cleaners are available for the following products:\n" +
+      "Available products:\n" +
       "• TZX\n• GOSTH\n• TESTO\n• SKRIPTGG\n\n" +
-      "An optional NVIDIA stream-proof service is available for an additional $10. Mouse support is not included; see the NVIDIA Bypass product for available options.\n\n" +
-      "Please contact our team for details about compatibility and service terms.",
+      "Optional NVIDIA stream-proof service: $10.\n" +
+      "Contact staff for compatibility and service details.",
     pricing: "• Price per cleaner → **$35**"
   },
   {
     command: "tweaks",
     title: "PC Optimization",
     description:
-      "🚀 **Complete PC Optimization for maximum performance, built for competitive gaming.**\n\n" +
-      "• 1,000+ Optimizations\n" +
+      "🚀 **Complete PC Optimization**\n\n" +
       "• BIOS Tuner\n" +
       "• Network Adapter Tuner\n" +
       "• Advanced Hardware Optimization\n" +
-      "• All Optimizations Unlocked\n" +
       "• High Priority Customer Support\n" +
       "• 20+ Advanced Features\n" +
-      "• All Plus Features",
+      "• All Plus Features\n\n" +
+      "Performance improvements depend on your hardware and configuration.",
     pricing:
       "• PC Optimization (One Time) → **$30**\n" +
       "• Re-PC Optimization (after a factory reset) → **$15**"
@@ -163,7 +238,7 @@ const PRODUCTS = [
     command: "fortnite_accounts",
     title: "Fortnite Accounts",
     description:
-      "These are full-access accounts. You receive the account email and login details, and can reset the password after purchase.\n\n" +
+      "Full-access account listings. Contact staff to confirm availability and ownership-transfer terms.\n\n" +
       "**Random Skin Accounts**\n" +
       "• 50+ Random Skins → **$7.99**\n" +
       "• 100+ Random Skins → **$11.99**\n" +
@@ -177,35 +252,88 @@ const PRODUCTS = [
       "• Black Knight → $115\n" +
       "• Travis Scott → $60\n\n" +
       "**Other Accounts**\n" +
-      "• PC/PSN/XBOX — 82 skins, The Ageless Champion, Burning Ambition Valeria, Sideways Warrior, AurelianGAL23 → **$55**\n" +
-      "• PC/XBOX — 125 skins, Naruto Uzumaki, Spectra Knight, Omegarok, Lynx, Snap, Drift, Catalyst, 1550 MB413 → **$85**\n" +
-      "• PC/PSN — 108 skins, Star Wand, Get Griddy, Plunja, Optimus Prime → **$65**\n\n" +
-      "Need something else? Open a ticket and request more account options.",
-    pricing: "Prices are listed in the account categories above."
+      "• PC/PSN/XBOX — 82 skins → **$55**\n" +
+      "• PC/XBOX — 125 skins → **$85**\n" +
+      "• PC/PSN — 108 skins → **$65**\n\n" +
+      "Open a ticket for details.",
+    pricing: "Prices are listed above."
   },
   {
     command: "fortnite_vbucks",
     title: "Fortnite V-Bucks",
     description: "Fortnite V-Bucks packages for PC Epic accounts.",
-    pricing: "• PC - Epic → 4,500 V-Bucks → **$40**\n• PC - Epic → 12,500 V-Bucks → **$80**"
+    pricing:
+      "• PC - Epic → 4,500 V-Bucks → **$40**\n" +
+      "• PC - Epic → 12,500 V-Bucks → **$80**"
   }
 ];
 
 // =====================================================
-// UTILITIES
+// DATABASE
 // =====================================================
 
-function log(message) {
-  console.log(`[RYVORA] ${message}`);
+function readJson(filename, fallback) {
+  try {
+    if (!fs.existsSync(filename)) return fallback;
+    return JSON.parse(fs.readFileSync(filename, "utf8"));
+  } catch (error) {
+    errorLog("Database read error:", error);
+    return fallback;
+  }
 }
 
-function errorLog(context, error) {
-  console.error(`[RYVORA] ${context}`, error);
+function writeJson(filename, data) {
+  const temp = filename + ".tmp";
+
+  fs.writeFileSync(
+    temp,
+    JSON.stringify(data, null, 2),
+    "utf8"
+  );
+
+  fs.renameSync(temp, filename);
 }
 
-function baseEmbed(title, description) {
+const defaultDatabase = () => ({
+  competition: null,
+  members: {},
+  unknownJoins: 0
+});
+
+let database = {
+  ...defaultDatabase(),
+  ...readJson(DATA_FILE, defaultDatabase())
+};
+
+database.members ||= {};
+
+let state = {
+  tickets: {},
+  ...readJson(STATE_FILE, {})
+};
+
+state.tickets ||= {};
+
+function saveDatabase() {
+  writeJson(DATA_FILE, database);
+}
+
+function saveState() {
+  writeJson(STATE_FILE, state);
+}
+
+function memberStats(id) {
+  database.members[id] ||= {
+    invites: 0,
+    joins: []
+  };
+
+  return database.members[id];
+}
+
+function baseEmbed(title, description, color = CONFIG.color) {
   return new EmbedBuilder()
-    .setColor(CONFIG.color)
+    .setColor(color)
     .setTitle(title)
     .setDescription(description)
     .setFooter({
@@ -214,72 +342,562 @@ function baseEmbed(title, description) {
     .setTimestamp();
 }
 
-function imageAttachment(filename, attachmentName) {
-  const location = path.join(__dirname, filename);
-  if (!fs.existsSync(location)) return null;
-  return new AttachmentBuilder(location, { name: attachmentName });
-}
-
-function applyImage(embed, url) {
-  if (url && /^https?:\/\//i.test(url)) {
-    embed.setImage(url);
-  }
-}
-
-async function privateReply(interaction, content) {
-  if (interaction.deferred) {
-    return interaction.editReply({ content });
-  }
-
-  if (interaction.replied) {
-    return interaction.followUp({
-      content,
-      flags: MessageFlags.Ephemeral
-    });
-  }
-
-  return interaction.reply({
-    content,
-    flags: MessageFlags.Ephemeral
-  });
-}
-
 function isAdmin(interaction) {
   return interaction.memberPermissions?.has(
     PermissionFlagsBits.Administrator
   ) || false;
 }
 
-async function getBotMember(guild) {
-  return guild.members.fetchMe();
+function isStaff(interaction) {
+  return isAdmin(interaction) ||
+    interaction.member?.roles?.cache?.has(CONFIG.staffRoleId) ||
+    interaction.memberPermissions?.has(
+      PermissionFlagsBits.ManageChannels
+    );
+}
+
+async function privateReply(interaction, content) {
+  const payload = typeof content === "string"
+    ? { content }
+    : content;
+
+  if (interaction.deferred) {
+    return interaction.editReply(payload);
+  }
+
+  if (interaction.replied) {
+    return interaction.followUp({
+      ...payload,
+      flags: MessageFlags.Ephemeral
+    });
+  }
+
+  return interaction.reply({
+    ...payload,
+    flags: MessageFlags.Ephemeral
+  });
+}
+
+async function sendLog(guild, channelId, payload) {
+  if (!channelId) return;
+
+  const channel = await guild.channels.fetch(channelId)
+    .catch(() => null);
+
+  if (!channel?.isTextBased()) return;
+
+  await channel.send({
+    ...payload,
+    allowedMentions: { parse: [] }
+  }).catch(error => errorLog("Log delivery failed:", error));
 }
 
 // =====================================================
-// PRODUCT EMBEDS
+// TICKET SYSTEM
 // =====================================================
 
-function createProductEmbed(product) {
+const TICKET_CATEGORIES = {
+  purchase: {
+    title: "Purchase",
+    emoji: "🛒",
+    description: "Purchase a product",
+    image: IMAGES.ticketPurchase
+  },
+  pre_sale: {
+    title: "Pre-Sale Question",
+    emoji: "❓",
+    description: "Ask before purchasing",
+    image: IMAGES.ticketPreSale
+  },
+  support: {
+    title: "Support",
+    emoji: "🛠️",
+    description: "General assistance",
+    image: IMAGES.ticketSupport
+  },
+  hwid_reset: {
+    title: "HWID Reset",
+    emoji: "🔑",
+    description: "Request an HWID reset",
+    image: IMAGES.ticketHwid
+  },
+  media_reseller: {
+    title: "Media / Reseller",
+    emoji: "📦",
+    description: "Partnership inquiries",
+    image: IMAGES.ticketMedia
+  }
+};
+
+function ticketPanel() {
   const embed = baseEmbed(
-    `✦ ${product.title}`,
-    `${product.description}\n\n` +
-    `💳 **PRICING**\n${product.pricing}\n\n` +
+    "🎫 RYVORA • SUPPORT CENTER",
+    "## PREMIUM SUPPORT\n\n" +
+    "Welcome to our official support center.\n\n" +
+    "🛒 **Purchase** — Place an order\n" +
+    "❓ **Pre-Sale** — Product questions\n" +
+    "🛠️ **Support** — Technical assistance\n" +
+    "🔑 **HWID Reset** — Reset requests\n" +
+    "📦 **Media / Reseller** — Partnerships\n\n" +
     "━━━━━━━━━━━━━━━━━━━━\n" +
-    "🛒 **Ready to order?**\n" +
-    "Open a support ticket and select **Purchase**."
+    "💜 Select your category to create a private ticket."
   );
 
-  if (product.image) embed.setImage(product.image);
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("ryvora_ticket_category")
+    .setPlaceholder("✦ Select a support category")
+    .addOptions(
+      Object.entries(TICKET_CATEGORIES).map(([value, item]) => ({
+        label: item.title,
+        value,
+        description: item.description,
+        emoji: item.emoji
+      }))
+    );
 
-  embed.setAuthor({
-    name: "RYVORA • PRODUCT CATALOG",
-    iconURL: client.user.displayAvatarURL()
+  return {
+    embed,
+    components: [
+      new ActionRowBuilder().addComponents(menu)
+    ]
+  };
+}
+
+function ticketButtons(claimed = false) {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("ryvora_claim_ticket")
+        .setLabel(claimed ? "Claimed" : "Claim Ticket")
+        .setEmoji("🙋")
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(claimed),
+
+      new ButtonBuilder()
+        .setCustomId("ryvora_close_ticket")
+        .setLabel("Close Ticket")
+        .setEmoji("🔒")
+        .setStyle(ButtonStyle.Danger)
+    )
+  ];
+}
+
+const ticketLocks = new Set();
+
+async function createTicket(interaction, categoryKey, productKey = null) {
+  await interaction.deferReply({
+    flags: MessageFlags.Ephemeral
   });
 
-  return embed;
+  const category = TICKET_CATEGORIES[categoryKey];
+
+  if (!category) {
+    return interaction.editReply("❌ Invalid ticket category.");
+  }
+
+  const guild = interaction.guild;
+  const lockKey = `${guild.id}:${interaction.user.id}`;
+
+  if (ticketLocks.has(lockKey)) {
+    return interaction.editReply("⏳ Your ticket is being created.");
+  }
+
+  ticketLocks.add(lockKey);
+
+  try {
+    const parent = await guild.channels
+      .fetch(CONFIG.ticketCategoryId)
+      .catch(() => null);
+
+    if (parent?.type !== ChannelType.GuildCategory) {
+      return interaction.editReply(
+        "❌ Ticket category is not configured correctly."
+      );
+    }
+
+    const bot = await guild.members.fetchMe();
+
+    if (!bot.permissions.has(PermissionFlagsBits.ManageChannels)) {
+      return interaction.editReply(
+        "❌ Bot requires Manage Channels permission."
+      );
+    }
+
+    const staffRole = await guild.roles
+      .fetch(CONFIG.staffRoleId)
+      .catch(() => null);
+
+    if (!staffRole) {
+      return interaction.editReply("❌ Staff role not found.");
+    }
+
+    await guild.channels.fetch();
+
+    const existing = guild.channels.cache.find(channel =>
+      channel.type === ChannelType.GuildText &&
+      channel.parentId === CONFIG.ticketCategoryId &&
+      channel.topic?.startsWith(
+        `ticket-owner:${interaction.user.id}`
+      )
+    );
+
+    if (existing) {
+      return interaction.editReply(
+        `⚠️ You already have a ticket: ${existing}`
+      );
+    }
+
+    const channel = await guild.channels.create({
+      name: `ticket-${categoryKey}-${interaction.user.id}`,
+      type: ChannelType.GuildText,
+      parent: CONFIG.ticketCategoryId,
+      topic: `ticket-owner:${interaction.user.id}|category:${categoryKey}`,
+      permissionOverwrites: [
+        {
+          id: guild.roles.everyone.id,
+          deny: [PermissionFlagsBits.ViewChannel]
+        },
+        {
+          id: interaction.user.id,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.AttachFiles
+          ]
+        },
+        {
+          id: CONFIG.staffRoleId,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.AttachFiles
+          ]
+        },
+        {
+          id: client.user.id,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.ManageChannels
+          ]
+        }
+      ]
+    });
+
+    const product = PRODUCTS.find(p => p.command === productKey);
+
+    state.tickets[channel.id] = {
+      ownerId: interaction.user.id,
+      category: categoryKey,
+      product: productKey,
+      claimedBy: null,
+      createdAt: Date.now()
+    };
+
+    saveState();
+
+    const embed = baseEmbed(
+      `${category.emoji} RYVORA • ${category.title}`,
+      `Welcome <@${interaction.user.id}>!\n\n` +
+      `**Category:** ${category.title}\n` +
+      (product ? `**Product:** ${product.title}\n` : "") +
+      "\nPlease describe your request clearly.\n\n" +
+      "Our support team will assist you.\n\n" +
+      "━━━━━━━━━━━━━━━━━━━━\n" +
+      "🔒 Use the buttons below to manage this ticket."
+    );
+
+    const imageKey = `TICKET_${categoryKey.toUpperCase()}`;
+
+    const files = attachImage(
+      embed,
+      imageKey,
+      category.image
+    );
+
+    await channel.send({
+      content: `<@${interaction.user.id}> <@&${CONFIG.staffRoleId}>`,
+      embeds: [embed],
+      components: ticketButtons(),
+      files,
+      allowedMentions: {
+        users: [interaction.user.id],
+        roles: [CONFIG.staffRoleId]
+      }
+    });
+
+    await interaction.editReply({
+      content: `✅ Your ticket has been created: ${channel}`
+    });
+
+    await sendLog(guild, CONFIG.ticketLogChannelId, {
+      embeds: [
+        baseEmbed(
+          "🎫 RYVORA • TICKET CREATED",
+          `**Owner:** <@${interaction.user.id}>\n` +
+          `**Category:** ${category.title}\n` +
+          `**Channel:** ${channel}`
+        )
+      ]
+    });
+
+  } finally {
+    ticketLocks.delete(lockKey);
+  }
+}
+
+function ticketOwnerId(channel) {
+  return channel?.topic?.match(/ticket-owner:(\d+)/)?.[1] || null;
+}
+
+async function claimTicket(interaction) {
+  await interaction.deferReply({
+    flags: MessageFlags.Ephemeral
+  });
+
+  if (!isStaff(interaction)) {
+    return interaction.editReply("❌ Staff only.");
+  }
+
+  const channel = interaction.channel;
+  const ownerId = ticketOwnerId(channel);
+
+  if (!ownerId || channel.parentId !== CONFIG.ticketCategoryId) {
+    return interaction.editReply("❌ Invalid ticket.");
+  }
+
+  const ticket = state.tickets[channel.id] || {
+    ownerId,
+    category: "support",
+    claimedBy: null,
+    createdAt: Date.now()
+  };
+
+  if (ticket.claimedBy) {
+    return interaction.editReply(
+      `⚠️ Already claimed by <@${ticket.claimedBy}>.`
+    );
+  }
+
+  ticket.claimedBy = interaction.user.id;
+  state.tickets[channel.id] = ticket;
+  saveState();
+
+  await interaction.message.edit({
+    components: ticketButtons(true)
+  });
+
+  await channel.send({
+    embeds: [
+      baseEmbed(
+        "💜 RYVORA • STAFF ASSIGNED",
+        `🙋 <@${interaction.user.id}> has claimed this ticket.`
+      )
+    ],
+    allowedMentions: { parse: [] }
+  });
+
+  await interaction.editReply("✅ Ticket claimed successfully.");
+}
+
+async function createTranscript(channel) {
+  const messages = [];
+  let before;
+
+  for (let page = 0; page < 20; page++) {
+    const batch = await channel.messages.fetch({
+      limit: 100,
+      ...(before ? { before } : {})
+    });
+
+    if (!batch.size) break;
+
+    messages.push(...batch.values());
+    before = batch.last().id;
+
+    if (batch.size < 100) break;
+  }
+
+  messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+
+  const lines = [
+    `RYVORA TICKET TRANSCRIPT`,
+    `Channel: ${channel.name}`,
+    `Channel ID: ${channel.id}`,
+    `Generated: ${new Date().toISOString()}`,
+    `Messages captured: ${messages.length}`,
+    "-----------------------------------------"
+  ];
+
+  for (const message of messages) {
+    const timestamp = new Date(message.createdTimestamp)
+      .toISOString();
+
+    lines.push(
+      `[${timestamp}] ${message.author.tag} (${message.author.id})`
+    );
+
+    if (message.content) {
+      lines.push(message.content);
+    }
+
+    for (const attachment of message.attachments.values()) {
+      lines.push(`Attachment: ${attachment.url}`);
+    }
+
+    lines.push("");
+  }
+
+  const buffer = Buffer.from(lines.join("\n"), "utf8");
+
+  if (buffer.length > 7 * 1024 * 1024) {
+    return null;
+  }
+
+  return new AttachmentBuilder(buffer, {
+    name: `ryvora-ticket-${channel.id}.txt`
+  });
+}
+
+async function closeTicket(interaction) {
+  await interaction.deferReply({
+    flags: MessageFlags.Ephemeral
+  });
+
+  const channel = interaction.channel;
+  const ownerId = ticketOwnerId(channel);
+
+  if (
+    !ownerId ||
+    channel.parentId !== CONFIG.ticketCategoryId
+  ) {
+    return interaction.editReply("❌ Invalid ticket.");
+  }
+
+  if (interaction.user.id !== ownerId && !isStaff(interaction)) {
+    return interaction.editReply(
+      "❌ Only the ticket owner or staff can close this ticket."
+    );
+  }
+
+  if (ticketLocks.has(channel.id)) {
+    return interaction.editReply("⏳ Ticket is already closing.");
+  }
+
+  ticketLocks.add(channel.id);
+
+  try {
+    await interaction.editReply(
+      "🔒 Closing ticket and saving transcript..."
+    );
+
+    let transcript = null;
+
+    try {
+      transcript = await createTranscript(channel);
+    } catch (error) {
+      errorLog("Transcript generation failed:", error);
+    }
+
+    const ticket = state.tickets[channel.id];
+
+    await sendLog(interaction.guild, CONFIG.ticketLogChannelId, {
+      embeds: [
+        baseEmbed(
+          "🔒 RYVORA • TICKET CLOSED",
+          `**Channel:** ${channel.name}\n` +
+          `**Owner:** <@${ownerId}>\n` +
+          `**Closed By:** <@${interaction.user.id}>\n` +
+          `**Category:** ${ticket?.category || "Unknown"}\n` +
+          `**Claimed By:** ${
+            ticket?.claimedBy
+              ? `<@${ticket.claimedBy}>`
+              : "Not claimed"
+          }`
+        )
+      ],
+      files: transcript ? [transcript] : []
+    });
+
+    await channel.delete(
+      `Ticket closed by ${interaction.user.tag}`
+    );
+
+    delete state.tickets[channel.id];
+    saveState();
+
+  } finally {
+    ticketLocks.delete(channel.id);
+  }
 }
 
 // =====================================================
-// WELCOME SYSTEM
+// VERIFICATION
+// =====================================================
+
+function verifyPanel() {
+  return baseEmbed(
+    "🔐 RYVORA • VERIFICATION",
+    "## WELCOME TO RYVORA\n\n" +
+    "Unlock access to our community in seconds.\n\n" +
+    "✦ Read the server rules.\n" +
+    "✦ Click the button below.\n" +
+    "✦ Receive your verified role.\n\n" +
+    "━━━━━━━━━━━━━━━━━━━━\n" +
+    "💜 Click **Verify & Unlock** to continue."
+  );
+}
+
+async function verifyMember(interaction) {
+  await interaction.deferReply({
+    flags: MessageFlags.Ephemeral
+  });
+
+  const guild = interaction.guild;
+  const member = await guild.members.fetch(interaction.user.id);
+  const role = await guild.roles.fetch(CONFIG.verifyRoleId);
+  const bot = await guild.members.fetchMe();
+
+  if (!role) {
+    return interaction.editReply("❌ Verify role not found.");
+  }
+
+  if (!bot.permissions.has(PermissionFlagsBits.ManageRoles)) {
+    return interaction.editReply("❌ Bot needs Manage Roles.");
+  }
+
+  if (bot.roles.highest.position <= role.position) {
+    return interaction.editReply(
+      "❌ Move the bot role above the Verify role."
+    );
+  }
+
+  if (member.roles.cache.has(role.id)) {
+    return interaction.editReply("💜 You are already verified!");
+  }
+
+  await member.roles.add(role, "Ryvora verification");
+
+  await interaction.editReply(
+    "✅ **Verification Successful!** Welcome to Ryvora! 💜"
+  );
+
+  await sendLog(guild, CONFIG.verifyLogChannelId, {
+    embeds: [
+      baseEmbed(
+        "🔐 RYVORA • MEMBER VERIFIED",
+        `**Member:** <@${member.id}>\n` +
+        `**Role:** <@&${role.id}>`
+      )
+    ]
+  });
+}
+
+// =====================================================
+// WELCOME
 // =====================================================
 
 async function getWelcomeChannel(guild) {
@@ -291,62 +909,42 @@ async function getWelcomeChannel(guild) {
     if (channel?.isTextBased()) return channel;
   }
 
-  await guild.channels.fetch().catch(() => null);
+  await guild.channels.fetch();
 
   return guild.channels.cache.find(channel =>
     channel.type === ChannelType.GuildText &&
-    [
-      "welcome",
-      "welcomes",
-      "👋-welcome",
-      "welcome-members"
-    ].some(name =>
-      channel.name.toLowerCase() === name ||
-      channel.name.toLowerCase().endsWith(`-${name}`)
-    )
+    ["welcome", "welcomes", "welcome-members"]
+      .some(name => channel.name.toLowerCase().includes(name))
   );
 }
 
 async function sendWelcome(member) {
   const channel = await getWelcomeChannel(member.guild);
+
   if (!channel) return false;
 
   const embed = baseEmbed(
-    "✦ Welcome to Ryvora!",
+    "💜 RYVORA • WELCOME",
+    `## WELCOME TO RYVORA!\n\n` +
     `Hey ${member}! 👋\n\n` +
     `Welcome to **${CONFIG.fullName}**.\n\n` +
-    "💜 We're happy to have you here!\n" +
-    "✨ You're now part of the Ryvora community.\n\n" +
-    "━━━━━━━━━━━━━━━━━━━━\n" +
-    "🔐 **Get Verified** — Unlock the server.\n" +
-    "🎫 **Support** — Need help? Open a ticket.\n" +
-    "🚀 **Explore** — Discover everything Ryvora offers.\n\n" +
-    `👥 **You are member #${member.guild.memberCount}!**`
-  ).setThumbnail(member.user.displayAvatarURL({ size: 256 }));
+    "🔐 **Verify** — Unlock the server\n" +
+    "🎫 **Support** — Open a private ticket\n" +
+    "🛒 **Products** — Explore our catalog\n" +
+    "🎉 **Giveaways** — Join competitions\n\n" +
+    `👥 **Member #${member.guild.memberCount}**`
+  ).setThumbnail(
+    member.user.displayAvatarURL({ size: 256 })
+  );
 
-  const files = [];
-
-  if (CONFIG.welcomeImage) {
-    applyImage(embed, CONFIG.welcomeImage);
-  } else {
-    const image = imageAttachment(
-      "welcome.png",
-      "ryvora-welcome.png"
-    );
-
-    if (image) {
-      files.push(image);
-      embed.setImage("attachment://ryvora-welcome.png");
-    }
-  }
+  const files = attachImage(embed, "WELCOME", IMAGES.welcome);
 
   await channel.send({
-    content: `💜 Welcome ${member} to **${CONFIG.fullName}**!`,
+    content: `💜 Welcome ${member}!`,
     embeds: [embed],
     files,
     allowedMentions: {
       users: [member.id],
-      roles: [],
       parse: []
     }
   });
@@ -355,408 +953,20 @@ async function sendWelcome(member) {
 }
 
 // =====================================================
-// TICKET SYSTEM
-// =====================================================
-
-const TICKET_CATEGORIES = {
-  purchase: {
-    title: "Purchase",
-    emoji: "🛒",
-    description: "Purchase a product"
-  },
-  pre_sale: {
-    title: "Pre-Sale Question",
-    emoji: "❓",
-    description: "Ask before purchasing"
-  },
-  support: {
-    title: "Support",
-    emoji: "🛠️",
-    description: "General support"
-  },
-  hwid_reset: {
-    title: "HWID Reset",
-    emoji: "🔑",
-    description: "Request an HWID reset"
-  },
-  media_reseller: {
-    title: "Media / Reseller",
-    emoji: "📦",
-    description: "Partnership inquiries"
-  }
-};
-
-function createTicketPanel() {
-  const embed = baseEmbed(
-    "🎫 RYVORA • SUPPORT CENTER",
-    "**Welcome to our official support center.**\n\n" +
-    "Our team is here to help with purchases, product questions, and general assistance.\n\n" +
-    "🛒 **Purchase** — Place a new order.\n" +
-    "❓ **Pre-Sale** — Ask about a product.\n" +
-    "🛠️ **Support** — Get assistance.\n" +
-    "🔑 **HWID Reset** — Request a reset.\n" +
-    "📦 **Media / Reseller** — Partnerships.\n\n" +
-    "━━━━━━━━━━━━━━━━━━━━\n" +
-    "💜 **Select an option below to open a private ticket.**"
-  );
-
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId("ryvora_ticket_category")
-    .setPlaceholder("✦ Choose a support category")
-    .addOptions(
-      Object.entries(TICKET_CATEGORIES).map(
-        ([value, category]) => ({
-          label: category.title,
-          value,
-          description: category.description,
-          emoji: category.emoji
-        })
-      )
-    );
-
-  return {
-    embeds: [embed],
-    components: [
-      new ActionRowBuilder().addComponents(menu)
-    ]
-  };
-}
-
-function createVerifyPanel() {
-  const embed = baseEmbed(
-    "🔐 RYVORA • VERIFICATION",
-    "## Welcome to Ryvora!\n\n" +
-    "Before accessing the community, please complete verification.\n\n" +
-    "✦ **Step 1** — Read the server rules.\n" +
-    "✦ **Step 2** — Click the Verify button.\n" +
-    "✦ **Step 3** — Receive your member role.\n\n" +
-    "━━━━━━━━━━━━━━━━━━━━\n" +
-    "💜 **Click below to unlock the server.**"
-  );
-
-  const button = new ButtonBuilder()
-    .setCustomId("ryvora_verify")
-    .setLabel("Verify & Unlock")
-    .setEmoji("✅")
-    .setStyle(ButtonStyle.Success);
-
-  return {
-    embeds: [embed],
-    components: [
-      new ActionRowBuilder().addComponents(button)
-    ]
-  };
-}
-
-function createCloseButton() {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("ryvora_close_ticket")
-      .setLabel("Close Ticket")
-      .setEmoji("🔒")
-      .setStyle(ButtonStyle.Danger)
-  );
-}
-
-async function createTicket(interaction) {
-  const guild = interaction.guild;
-  const categoryKey = interaction.values[0];
-  const category = TICKET_CATEGORIES[categoryKey];
-
-  if (!category) {
-    return privateReply(interaction, "❌ Invalid ticket category.");
-  }
-
-  await interaction.deferReply({
-    flags: MessageFlags.Ephemeral
-  });
-
-  const botMember = await getBotMember(guild);
-
-  if (!botMember.permissions.has(
-    PermissionFlagsBits.ManageChannels
-  )) {
-    return interaction.editReply({
-      content: "❌ Bot needs Manage Channels permission."
-    });
-  }
-
-  const parent = await guild.channels
-    .fetch(CONFIG.ticketCategoryId)
-    .catch(() => null);
-
-  if (!parent || parent.type !== ChannelType.GuildCategory) {
-    return interaction.editReply({
-      content: "❌ Ticket category is not configured correctly."
-    });
-  }
-
-  const staffRole = await guild.roles
-    .fetch(CONFIG.staffRoleId)
-    .catch(() => null);
-
-  if (!staffRole) {
-    return interaction.editReply({
-      content: "❌ Staff role not found."
-    });
-  }
-
-  await guild.channels.fetch();
-
-  const existing = guild.channels.cache.find(channel =>
-    channel.type === ChannelType.GuildText &&
-    channel.parentId === CONFIG.ticketCategoryId &&
-    channel.topic === `ticket-owner:${interaction.user.id}`
-  );
-
-  if (existing) {
-    return interaction.editReply({
-      content: `⚠️ You already have a ticket: ${existing}`
-    });
-  }
-
-  const channel = await guild.channels.create({
-    name: `ticket-${categoryKey}-${interaction.user.id}`,
-    type: ChannelType.GuildText,
-    parent: CONFIG.ticketCategoryId,
-    topic: `ticket-owner:${interaction.user.id}`,
-    permissionOverwrites: [
-      {
-        id: guild.roles.everyone.id,
-        deny: [PermissionFlagsBits.ViewChannel]
-      },
-      {
-        id: interaction.user.id,
-        allow: [
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.SendMessages,
-          PermissionFlagsBits.ReadMessageHistory,
-          PermissionFlagsBits.AttachFiles
-        ]
-      },
-      {
-        id: CONFIG.staffRoleId,
-        allow: [
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.SendMessages,
-          PermissionFlagsBits.ReadMessageHistory,
-          PermissionFlagsBits.AttachFiles
-        ]
-      },
-      {
-        id: client.user.id,
-        allow: [
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.SendMessages,
-          PermissionFlagsBits.ReadMessageHistory,
-          PermissionFlagsBits.ManageChannels
-        ]
-      }
-    ]
-  });
-
-  await channel.send({
-    content: `<@${interaction.user.id}> <@&${CONFIG.staffRoleId}>`,
-    embeds: [
-      baseEmbed(
-        `${category.emoji} RYVORA • ${category.title}`,
-        `Welcome <@${interaction.user.id}>!\n\n` +
-        `**Ticket Category:** ${category.title}\n\n` +
-        "Your private support ticket has been created.\n" +
-        "Please describe your request clearly.\n\n" +
-        "🔒 Click **Close Ticket** when finished."
-      )
-    ],
-    components: [createCloseButton()],
-    allowedMentions: {
-      users: [interaction.user.id],
-      roles: [CONFIG.staffRoleId]
-    }
-  });
-
-  await interaction.editReply({
-    content: `✅ Ticket created: ${channel}`
-  });
-}
-
-async function closeTicket(interaction) {
-  const channel = interaction.channel;
-
-  if (
-    channel.type !== ChannelType.GuildText ||
-    channel.parentId !== CONFIG.ticketCategoryId ||
-    !channel.topic?.startsWith("ticket-owner:")
-  ) {
-    return privateReply(interaction, "❌ Invalid ticket.");
-  }
-
-  const ownerId = channel.topic.split(":")[1];
-  const member = await interaction.guild.members.fetch(
-    interaction.user.id
-  );
-
-  const authorized =
-    ownerId === member.id ||
-    member.roles.cache.has(CONFIG.staffRoleId) ||
-    member.permissions.has(PermissionFlagsBits.ManageChannels);
-
-  if (!authorized) {
-    return privateReply(
-      interaction,
-      "❌ Only the ticket owner or staff can close this ticket."
-    );
-  }
-
-  await interaction.reply({
-    embeds: [
-      baseEmbed(
-        "🔒 Ticket Closing",
-        "This ticket will close in **5 seconds**."
-      )
-    ]
-  });
-
-  setTimeout(async () => {
-    try {
-      await channel.delete(
-        `Ticket closed by ${interaction.user.tag}`
-      );
-    } catch (error) {
-      errorLog("Ticket deletion failed:", error);
-    }
-  }, 5000);
-}
-
-// =====================================================
-// VERIFY SYSTEM
-// =====================================================
-
-async function verifyMember(interaction) {
-  const guild = interaction.guild;
-  const member = await guild.members.fetch(interaction.user.id);
-  const role = await guild.roles.fetch(CONFIG.verifyRoleId);
-  const botMember = await getBotMember(guild);
-
-  if (!role) {
-    return privateReply(interaction, "❌ Verify role not found.");
-  }
-
-  if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
-    return privateReply(interaction, "❌ Bot needs Manage Roles.");
-  }
-
-  if (botMember.roles.highest.position <= role.position) {
-    return privateReply(
-      interaction,
-      "❌ Move the bot role above the Verify role."
-    );
-  }
-
-  if (member.roles.cache.has(role.id)) {
-    return privateReply(interaction, "💜 Already verified!");
-  }
-
-  await interaction.deferReply({
-    flags: MessageFlags.Ephemeral
-  });
-
-  await member.roles.add(role, "Ryvora verification");
-
-  await interaction.editReply({
-    content: "✅ **Verification Successful!** Welcome to Ryvora! 💜"
-  });
-}
-
-// =====================================================
-// INVITE COMPETITION DATABASE
-// =====================================================
-
-const DATA_FILE = path.join(__dirname, "ryvora-invites.json");
-
-function defaultDatabase() {
-  return {
-    competition: null,
-    members: {},
-    unknownJoins: 0
-  };
-}
-
-function loadDatabase() {
-  try {
-    if (!fs.existsSync(DATA_FILE)) return defaultDatabase();
-
-    const data = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-
-    return {
-      ...defaultDatabase(),
-      ...data,
-      members: data.members || {}
-    };
-  } catch (error) {
-    errorLog("Database loading failed:", error);
-    throw error;
-  }
-}
-
-let database = loadDatabase();
-
-function saveDatabase() {
-  const temporary = `${DATA_FILE}.tmp`;
-
-  fs.writeFileSync(
-    temporary,
-    JSON.stringify(database, null, 2),
-    "utf8"
-  );
-
-  fs.renameSync(temporary, DATA_FILE);
-}
-
-function memberStats(userId) {
-  if (!database.members[userId]) {
-    database.members[userId] = {
-      invites: 0,
-      joins: []
-    };
-  }
-
-  return database.members[userId];
-}
-
-function competitionActive() {
-  return (
-    database.competition &&
-    database.competition.active &&
-    Date.now() < database.competition.endsAt
-  );
-}
-
-function getLeaderboard() {
-  return Object.entries(database.members)
-    .map(([id, data]) => ({
-      id,
-      invites: data.invites || 0
-    }))
-    .filter(user => user.invites > 0)
-    .sort((a, b) =>
-      b.invites - a.invites ||
-      a.id.localeCompare(b.id)
-    );
-}
-
-// =====================================================
-// INVITE TRACKER
+// INVITE TRACKING
 // =====================================================
 
 const inviteCache = new Map();
 let inviteQueue = Promise.resolve();
 
 function queueInviteOperation(operation) {
-  const next = inviteQueue.then(operation);
-  inviteQueue = next.catch(error => {
+  const result = inviteQueue.then(operation);
+
+  inviteQueue = result.catch(error => {
     errorLog("Invite queue failed:", error);
   });
-  return next;
+
+  return result;
 }
 
 async function fetchInviteSnapshot(guild) {
@@ -777,33 +987,32 @@ async function initializeInvites(guild) {
   try {
     const snapshot = await fetchInviteSnapshot(guild);
     inviteCache.set(guild.id, snapshot);
-    log(`Invite tracking ready: ${snapshot.size} invites.`);
+    log(`Invite tracking initialized: ${snapshot.size} links.`);
   } catch (error) {
-    errorLog("Cannot fetch invites:", error);
-    log("Invite tracking requires Manage Server permission.");
+    errorLog("Invite initialization failed:", error);
   }
 }
 
-client.on(Events.InviteCreate, async invite => {
-  if (invite.guild?.id !== CONFIG.guildId) return;
+function competitionActive() {
+  return Boolean(
+    database.competition?.active &&
+    Date.now() < database.competition.endsAt
+  );
+}
 
-  await queueInviteOperation(async () => {
-    await initializeInvites(invite.guild);
-  });
-});
-
-client.on(Events.InviteDelete, async invite => {
-  if (invite.guild?.id !== CONFIG.guildId) return;
-
-  await queueInviteOperation(async () => {
-    const cache = inviteCache.get(invite.guild.id);
-    if (cache) cache.delete(invite.code);
-  });
-});
+function getLeaderboard() {
+  return Object.entries(database.members)
+    .map(([id, stats]) => ({
+      id,
+      invites: stats.invites || 0
+    }))
+    .filter(item => item.invites > 0)
+    .sort((a, b) =>
+      b.invites - a.invites || a.id.localeCompare(b.id)
+    );
+}
 
 async function trackMemberJoin(member) {
-  if (!competitionActive()) return;
-
   const guild = member.guild;
   const previous = inviteCache.get(guild.id);
 
@@ -813,22 +1022,38 @@ async function trackMemberJoin(member) {
     current = await fetchInviteSnapshot(guild);
   } catch (error) {
     errorLog("Invite fetch failed:", error);
-    return;
+
+    return {
+      status: "unknown",
+      inviterId: null
+    };
   }
 
   inviteCache.set(guild.id, current);
 
-  if (!previous) {
-    database.unknownJoins++;
-    saveDatabase();
-    return;
-  }
+  const unknown = () => {
+    if (competitionActive()) {
+      database.unknownJoins++;
+      saveDatabase();
+    }
+
+    return {
+      status: "unknown",
+      inviterId: null
+    };
+  };
+
+  if (!previous) return unknown();
 
   const candidates = [];
 
   for (const [code, invite] of current) {
     const old = previous.get(code);
-    const difference = invite.uses - (old?.uses || 0);
+
+    // Only compare links present in the previous snapshot.
+    if (!old) continue;
+
+    const difference = invite.uses - old.uses;
 
     if (difference > 0 && invite.inviterId) {
       candidates.push({
@@ -839,30 +1064,39 @@ async function trackMemberJoin(member) {
     }
   }
 
-  // A unique single-use increase is the safest attribution.
   if (
     candidates.length !== 1 ||
     candidates[0].difference !== 1
   ) {
-    database.unknownJoins++;
-    saveDatabase();
-    return;
+    return unknown();
   }
 
   const inviterId = candidates[0].inviterId;
 
-  if (member.user.bot || inviterId === member.id) return;
+  if (member.user.bot) {
+    return { status: "bot", inviterId };
+  }
 
-  // Reject accounts created less than 7 days ago.
-  const accountAge = Date.now() - member.user.createdTimestamp;
-  const minimumAge = 7 * 24 * 60 * 60 * 1000;
+  if (inviterId === member.id) {
+    return { status: "self", inviterId };
+  }
 
-  if (accountAge < minimumAge) return;
+  if (Date.now() - member.user.createdTimestamp < 7 * DAY) {
+    return { status: "new_account", inviterId };
+  }
+
+  if (!competitionActive()) {
+    return { status: "inactive", inviterId };
+  }
+
+  const duplicate = Object.values(database.members)
+    .some(stats => stats.joins?.includes(member.id));
+
+  if (duplicate) {
+    return { status: "duplicate", inviterId };
+  }
 
   const stats = memberStats(inviterId);
-
-  // Prevent duplicate credit for the same member.
-  if (stats.joins.includes(member.id)) return;
 
   stats.invites++;
   stats.joins.push(member.id);
@@ -870,13 +1104,90 @@ async function trackMemberJoin(member) {
   saveDatabase();
 
   log(`Invite credited: ${inviterId} -> ${member.id}`);
+
+  return {
+    status: "valid",
+    inviterId,
+    total: stats.invites
+  };
 }
+
+async function sendInviteLog(member, result) {
+  if (!CONFIG.inviteLogChannelId) return;
+
+  const statuses = {
+    valid: "✅ Valid Invite",
+    bot: "❌ Bot Account",
+    self: "❌ Self Invite",
+    new_account: "❌ Account Under 7 Days Old",
+    duplicate: "❌ Duplicate Invite",
+    inactive: "ℹ️ No Active Competition",
+    unknown: "⚠️ Could Not Verify Inviter"
+  };
+
+  const inviterId = result?.inviterId;
+  const status = result?.status || "unknown";
+
+  const embed = baseEmbed(
+    "📨 RYVORA • NEW MEMBER INVITE",
+    `👤 **Joined:** <@${member.id}>\n\n` +
+    `📨 **Invited By:** ${
+      inviterId ? `<@${inviterId}>` : "Unknown"
+    }\n\n` +
+    `🏆 **Valid Invites:** ${
+      inviterId ? (database.members[inviterId]?.invites || 0) : 0
+    }\n\n` +
+    `📊 **Status:** ${statuses[status] || statuses.unknown}\n\n` +
+    `🆔 **Member ID:** \`${member.id}\``,
+    status === "valid" ? CONFIG.success : CONFIG.warning
+  ).setThumbnail(member.user.displayAvatarURL());
+
+  const files = attachImage(
+    embed,
+    "INVITE_LOG",
+    IMAGES.inviteLog
+  );
+
+  await sendLog(member.guild, CONFIG.inviteLogChannelId, {
+    embeds: [embed],
+    files
+  });
+}
+
+client.on(Events.InviteCreate, invite => {
+  if (invite.guild?.id !== CONFIG.guildId) return;
+
+  queueInviteOperation(async () => {
+    const cache = inviteCache.get(invite.guild.id);
+
+    if (cache) {
+      cache.set(invite.code, {
+        uses: invite.uses || 0,
+        inviterId: invite.inviterId || invite.inviter?.id || null
+      });
+    } else {
+      await initializeInvites(invite.guild);
+    }
+  }).catch(error => errorLog("InviteCreate failed:", error));
+});
+
+client.on(Events.InviteDelete, invite => {
+  if (invite.guild?.id !== CONFIG.guildId) return;
+
+  queueInviteOperation(async () => {
+    inviteCache.get(invite.guild.id)?.delete(invite.code);
+  }).catch(error => errorLog("InviteDelete failed:", error));
+});
 
 client.on(Events.GuildMemberAdd, async member => {
   if (member.guild.id !== CONFIG.guildId) return;
 
   try {
-    await queueInviteOperation(() => trackMemberJoin(member));
+    const result = await queueInviteOperation(
+      () => trackMemberJoin(member)
+    );
+
+    await sendInviteLog(member, result);
   } catch (error) {
     errorLog("Invite tracking failed:", error);
   }
@@ -894,7 +1205,7 @@ client.on(Events.GuildMemberRemove, async member => {
   let changed = false;
 
   for (const stats of Object.values(database.members)) {
-    const index = stats.joins.indexOf(member.id);
+    const index = stats.joins?.indexOf(member.id) ?? -1;
 
     if (index !== -1) {
       stats.joins.splice(index, 1);
@@ -907,7 +1218,7 @@ client.on(Events.GuildMemberRemove, async member => {
 });
 
 // =====================================================
-// INVITE GIVEAWAY EMBEDS
+// GIVEAWAYS
 // =====================================================
 
 function giveawayEmbed() {
@@ -923,15 +1234,15 @@ function giveawayEmbed() {
   const top = getLeaderboard().slice(0, 3);
 
   const ranking = top.length
-    ? top.map((user, index) =>
-        `${["🥇", "🥈", "🥉"][index]} <@${user.id}> — **${user.invites}** invites`
-      ).join("\n")
+    ? top.map((item, index) =>
+      `${["🥇", "🥈", "🥉"][index]} <@${item.id}> — **${item.invites}** invites`
+    ).join("\n")
     : "No valid invites yet.";
 
   return baseEmbed(
     "🎉 RYVORA • INVITE COMPETITION",
     "## INVITE FRIENDS & WIN!\n\n" +
-    "Invite the most valid members to our server and win a free prize!\n\n" +
+    "Invite the most valid members and win a prize!\n\n" +
     `🏆 **PRIZE**\n${competition.prize}\n\n` +
     `⏰ **ENDS**\n<t:${Math.floor(competition.endsAt / 1000)}:R>\n\n` +
     `📊 **LIVE LEADERBOARD**\n${ranking}\n\n` +
@@ -941,7 +1252,7 @@ function giveawayEmbed() {
     "• Bot accounts do not count.\n" +
     "• Accounts must be at least 7 days old.\n" +
     "• Members must remain in the server.\n" +
-    "• Fake invites and abuse are disqualified.\n" +
+    "• Fake invites are disqualified.\n" +
     "• Unverifiable invites are not credited.\n\n" +
     "💜 Good luck! — RYVORA"
   );
@@ -950,56 +1261,39 @@ function giveawayEmbed() {
 function leaderboardEmbed() {
   const leaderboard = getLeaderboard().slice(0, 10);
 
-  const text = leaderboard.length
-    ? leaderboard.map((user, index) =>
-        `**#${index + 1}** <@${user.id}> — ${user.invites} invites`
-      ).join("\n")
-    : "No valid invites recorded yet.";
-
   return baseEmbed(
     "🏆 RYVORA • INVITE LEADERBOARD",
-    text
+    leaderboard.length
+      ? leaderboard.map((item, index) =>
+        `**#${index + 1}** <@${item.id}> — **${item.invites}** invites`
+      ).join("\n")
+      : "No valid invites recorded yet."
   );
 }
 
-// =====================================================
-// INVITE GIVEAWAY COMMANDS
-// =====================================================
-
 async function startCompetition(interaction) {
-  if (!isAdmin(interaction)) {
-    return privateReply(interaction, "❌ Administrator only.");
-  }
+  await interaction.deferReply({
+    flags: MessageFlags.Ephemeral
+  });
 
   if (database.competition?.active) {
-    return privateReply(
-      interaction,
-      "❌ A competition is already active."
+    return interaction.editReply(
+      "❌ A competition is already active. End it first."
     );
   }
 
   const days = interaction.options.getInteger("days");
   const prize = interaction.options.getString("prize");
-
-  const channel =
-    interaction.options.getChannel("channel") ||
+  const channel = interaction.options.getChannel("channel") ||
     interaction.channel;
-
-  if (!channel || !channel.isTextBased()) {
-    return privateReply(interaction, "❌ Invalid channel.");
-  }
-
-  await interaction.deferReply({
-    flags: MessageFlags.Ephemeral
-  });
 
   const snapshot = await fetchInviteSnapshot(interaction.guild)
     .catch(() => null);
 
   if (!snapshot) {
-    return interaction.editReply({
-      content: "❌ Bot needs Manage Server to track invites."
-    });
+    return interaction.editReply(
+      "❌ Bot requires Manage Server to track invites."
+    );
   }
 
   inviteCache.set(interaction.guild.id, snapshot);
@@ -1011,42 +1305,45 @@ async function startCompetition(interaction) {
     active: true,
     prize,
     startsAt: Date.now(),
-    endsAt: Date.now() + days * 86400000,
+    endsAt: Date.now() + days * DAY,
     channelId: channel.id,
     messageId: null
   };
 
   saveDatabase();
 
+  const embed = giveawayEmbed();
+  const files = attachImage(embed, "GIVEAWAY", IMAGES.giveaway);
+
   const message = await channel.send({
-    embeds: [giveawayEmbed()],
+    embeds: [embed],
+    files,
     allowedMentions: { parse: [] }
   });
 
   database.competition.messageId = message.id;
   saveDatabase();
 
-  await interaction.editReply({
-    content: `✅ Invite competition started in ${channel}!`
-  });
+  await interaction.editReply(
+    `✅ Competition started in ${channel}!`
+  );
 }
 
 async function showInvites(interaction) {
-  const user = interaction.options.getUser("user") || interaction.user;
+  const user = interaction.options.getUser("user") ||
+    interaction.user;
+
   const stats = database.members[user.id];
 
-  const count = stats?.invites || 0;
-
-  return interaction.reply({
+  return privateReply(interaction, {
     embeds: [
       baseEmbed(
-        "📨 RYVORA • YOUR INVITES",
+        "📨 RYVORA • INVITE STATISTICS",
         `👤 **Member:** ${user}\n\n` +
-        `🎯 **Valid Invites:** ${count}\n\n` +
-        "Only valid invites during the competition are counted."
+        `🏆 **Valid Invites:** ${stats?.invites || 0}\n\n` +
+        "Only valid competition invites are counted."
       )
-    ],
-    flags: MessageFlags.Ephemeral
+    ]
   });
 }
 
@@ -1056,33 +1353,31 @@ async function endCompetition(guild, automatic = false) {
   if (!competition?.active) return false;
 
   competition.active = false;
+  saveDatabase();
 
   const leaderboard = getLeaderboard();
 
-  let description;
+  let description = "No valid entries. No winner selected.";
 
-  if (!leaderboard.length) {
-    description = "No valid entries. No winner selected.";
-  } else {
-    const bestScore = leaderboard[0].invites;
-
-    const winners = leaderboard.filter(
-      user => user.invites === bestScore
+  if (leaderboard.length) {
+    const score = leaderboard[0].invites;
+    const winners = leaderboard.filter(item =>
+      item.invites === score
     );
 
     if (winners.length > 1) {
       description =
         "⚠️ **TIE DETECTED**\n\n" +
-        winners.map(user => `<@${user.id}>`).join("\n") +
-        `\n\n**Valid invites:** ${bestScore}\n\n` +
+        winners.map(item => `<@${item.id}>`).join("\n") +
+        `\n\n**Valid Invites:** ${score}\n` +
         "Staff must resolve the tie manually.";
     } else {
       description =
         `🎉 **WINNER:** <@${winners[0].id}>\n\n` +
-        `📨 **Valid Invites:** ${bestScore}\n\n` +
+        `🏆 **Valid Invites:** ${score}\n\n` +
         `🎁 **Prize:** ${competition.prize}\n\n` +
-        "Open a support ticket to claim your prize.\n" +
-        "Staff will verify the results before delivery.";
+        "Open a ticket to claim your prize.\n" +
+        "Staff will verify the result before delivery.";
     }
   }
 
@@ -1102,12 +1397,7 @@ async function endCompetition(guild, automatic = false) {
     });
   }
 
-  saveDatabase();
-
-  log(
-    `Competition ended (${automatic ? "automatic" : "manual"}).`
-  );
-
+  log(`Competition ended (${automatic ? "automatic" : "manual"}).`);
   return true;
 }
 
@@ -1128,66 +1418,119 @@ async function updateGiveawayMessage(guild) {
 
   if (!message) return;
 
+  const embed = giveawayEmbed();
+
+  // Existing attachments remain attached to the message.
+  const imageUrl = process.env.IMAGE_GIVEAWAY;
+
+  if (imageUrl && /^https?:\/\//i.test(imageUrl)) {
+    embed.setImage(imageUrl);
+  } else if (message.embeds[0]?.image?.url) {
+    embed.setImage(message.embeds[0].image.url);
+  }
+
   await message.edit({
-    embeds: [giveawayEmbed()],
+    embeds: [embed],
     allowedMentions: { parse: [] }
   });
+}
+
+// =====================================================
+// PRODUCT CARDS
+// =====================================================
+
+function productEmbed(product) {
+  return baseEmbed(
+    `✦ ${product.title}`,
+    `${product.description}\n\n` +
+    "━━━━━━━━━━━━━━━━━━━━\n" +
+    `💳 **PRICING**\n${product.pricing}\n\n` +
+    "━━━━━━━━━━━━━━━━━━━━\n" +
+    "🛒 **READY TO ORDER?**\n" +
+    "Click the Purchase button below to open a private ticket."
+  ).setAuthor({
+    name: "RYVORA • PREMIUM PRODUCT CATALOG",
+    iconURL: client.user.displayAvatarURL()
+  });
+}
+
+async function postProduct(interaction, product) {
+  await interaction.deferReply({
+    flags: MessageFlags.Ephemeral
+  });
+
+  const embed = productEmbed(product);
+
+  const files = attachImage(
+    embed,
+    `PRODUCT_${product.command.toUpperCase()}`,
+    IMAGES.products[product.command]
+  );
+
+  const button = new ButtonBuilder()
+    .setCustomId(`ryvora_buy:${product.command}`)
+    .setLabel("Purchase / Open Ticket")
+    .setEmoji("🛒")
+    .setStyle(ButtonStyle.Primary);
+
+  await interaction.channel.send({
+    embeds: [embed],
+    files,
+    components: [
+      new ActionRowBuilder().addComponents(button)
+    ]
+  });
+
+  await interaction.editReply(
+    `✅ ${product.title} product card posted.`
+  );
 }
 
 // =====================================================
 // SLASH COMMANDS
 // =====================================================
 
+const adminPermission = PermissionFlagsBits.Administrator;
+const managePermission = PermissionFlagsBits.ManageGuild;
+
 const commands = [
   new SlashCommandBuilder()
     .setName("setup")
-    .setDescription("Post the Ryvora support panel")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.Administrator
-    ),
+    .setDescription("Post the Ryvora ticket panel")
+    .setDefaultMemberPermissions(adminPermission),
 
   new SlashCommandBuilder()
     .setName("verify")
-    .setDescription("Post the Ryvora verification panel")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.Administrator
-    ),
+    .setDescription("Post the verification panel")
+    .setDefaultMemberPermissions(adminPermission),
 
   new SlashCommandBuilder()
     .setName("welcome-test")
-    .setDescription("Preview the Ryvora welcome message")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.Administrator
-    ),
+    .setDescription("Test the welcome system")
+    .setDefaultMemberPermissions(adminPermission),
 
   new SlashCommandBuilder()
     .setName("invite-start")
-    .setDescription("Start an invite giveaway")
+    .setDescription("Start an invite competition")
     .addIntegerOption(option =>
-      option
-        .setName("days")
-        .setDescription("Competition duration in days")
+      option.setName("days")
+        .setDescription("Competition duration")
         .setMinValue(1)
         .setMaxValue(30)
         .setRequired(true)
     )
     .addStringOption(option =>
-      option
-        .setName("prize")
-        .setDescription("Prize for the winner")
+      option.setName("prize")
+        .setDescription("Competition prize")
         .setMaxLength(200)
         .setRequired(true)
     )
     .addChannelOption(option =>
-      option
-        .setName("channel")
-        .setDescription("Channel for the giveaway announcement")
+      option.setName("channel")
+        .setDescription("Announcement channel")
         .addChannelTypes(ChannelType.GuildText)
-        .setRequired(false)
     )
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.Administrator
-    ),
+    .setDefaultMemberPermissions(adminPermission),
 
   new SlashCommandBuilder()
     .setName("invite-top")
@@ -1197,26 +1540,25 @@ const commands = [
     .setName("invites")
     .setDescription("Check valid invites")
     .addUserOption(option =>
-      option
-        .setName("user")
+      option.setName("user")
         .setDescription("Member to check")
-        .setRequired(false)
     ),
 
   new SlashCommandBuilder()
     .setName("invite-end")
-    .setDescription("End the invite giveaway")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.Administrator
-    ),
+    .setDescription("End the invite competition")
+    .setDefaultMemberPermissions(adminPermission),
+
+  new SlashCommandBuilder()
+    .setName("ryvora-status")
+    .setDescription("Show Ryvora bot status")
+    .setDefaultMemberPermissions(adminPermission),
 
   ...PRODUCTS.map(product =>
     new SlashCommandBuilder()
       .setName(product.command)
       .setDescription(`Post the ${product.title} product card`)
-      .setDefaultMemberPermissions(
-        PermissionFlagsBits.ManageGuild
-      )
+      .setDefaultMemberPermissions(managePermission)
   )
 ].map(command => command.toJSON());
 
@@ -1244,67 +1586,57 @@ async function sendPanel(interaction, type) {
     flags: MessageFlags.Ephemeral
   });
 
-  const payload = type === "ticket"
-    ? createTicketPanel()
-    : createVerifyPanel();
+  if (type === "ticket") {
+    const panel = ticketPanel();
 
-  const imageUrl = type === "ticket"
-    ? CONFIG.ticketImage
-    : CONFIG.verifyImage;
-
-  const localName = type === "ticket"
-    ? "ticket.png"
-    : "verify.png";
-
-  const attachmentName = type === "ticket"
-    ? "ryvora-ticket.png"
-    : "ryvora-verify.png";
-
-  if (imageUrl) {
-    applyImage(payload.embeds[0], imageUrl);
-  } else {
-    const attachment = imageAttachment(
-      localName,
-      attachmentName
+    const files = attachImage(
+      panel.embed,
+      "TICKET",
+      IMAGES.ticket
     );
 
-    if (attachment) {
-      payload.files = [attachment];
-      payload.embeds[0].setImage(
-        `attachment://${attachmentName}`
-      );
-    }
+    await interaction.channel.send({
+      embeds: [panel.embed],
+      components: panel.components,
+      files
+    });
+  } else {
+    const embed = verifyPanel();
+
+    const files = attachImage(
+      embed,
+      "VERIFY",
+      IMAGES.verify
+    );
+
+    const button = new ButtonBuilder()
+      .setCustomId("ryvora_verify")
+      .setLabel("Verify & Unlock")
+      .setEmoji("✅")
+      .setStyle(ButtonStyle.Success);
+
+    await interaction.channel.send({
+      embeds: [embed],
+      files,
+      components: [
+        new ActionRowBuilder().addComponents(button)
+      ]
+    });
   }
 
-  await interaction.channel.send(payload);
-
-  await interaction.editReply({
-    content: `✅ ${type} panel posted successfully.`
-  });
-}
-
-async function postProduct(interaction, product) {
-  await interaction.deferReply({
-    flags: MessageFlags.Ephemeral
-  });
-
-  await interaction.channel.send({
-    embeds: [createProductEmbed(product)]
-  });
-
-  await interaction.editReply({
-    content: `✅ ${product.title} product card posted.`
-  });
+  await interaction.editReply(
+    `✅ ${type} panel posted successfully.`
+  );
 }
 
 // =====================================================
-// INTERACTION HANDLER
+// INTERACTIONS
 // =====================================================
 
 client.on(Events.InteractionCreate, async interaction => {
   try {
-    if (!interaction.guild) return;
-    if (interaction.guild.id !== CONFIG.guildId) return;
+    if (!interaction.guild ||
+        interaction.guild.id !== CONFIG.guildId) return;
 
     if (interaction.isChatInputCommand()) {
       const name = interaction.commandName;
@@ -1328,11 +1660,11 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const sent = await sendWelcome(member);
 
-        return interaction.editReply({
-          content: sent
+        return interaction.editReply(
+          sent
             ? "✅ Welcome preview sent."
             : "❌ Welcome channel not found."
-        });
+        );
       }
 
       if (name === "invite-start") {
@@ -1340,8 +1672,17 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (name === "invite-top") {
+        const embed = leaderboardEmbed();
+
+        const files = attachImage(
+          embed,
+          "LEADERBOARD",
+          IMAGES.leaderboard
+        );
+
         return interaction.reply({
-          embeds: [leaderboardEmbed()]
+          embeds: [embed],
+          files
         });
       }
 
@@ -1351,10 +1692,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       if (name === "invite-end") {
         if (!isAdmin(interaction)) {
-          return privateReply(
-            interaction,
-            "❌ Administrator only."
-          );
+          return privateReply(interaction, "❌ Administrator only.");
         }
 
         await interaction.deferReply({
@@ -1363,15 +1701,33 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const ended = await endCompetition(interaction.guild);
 
-        return interaction.editReply({
-          content: ended
+        return interaction.editReply(
+          ended
             ? "✅ Competition ended."
             : "❌ No active competition."
+        );
+      }
+
+      if (name === "ryvora-status") {
+        return privateReply(interaction, {
+          embeds: [
+            baseEmbed(
+              "💜 RYVORA • SYSTEM STATUS",
+              "🟢 **Discord Connection:** Online\n" +
+              `🎫 **Tracked Tickets:** ${Object.keys(state.tickets).length}\n` +
+              `🛒 **Products:** ${PRODUCTS.length}\n` +
+              `🏆 **Competition:** ${
+                competitionActive() ? "Active" : "Inactive"
+              }\n` +
+              `📨 **Unknown Joins:** ${database.unknownJoins}\n` +
+              `⏱️ **Uptime:** ${Math.floor(process.uptime() / 60)} minutes`
+            )
+          ]
         });
       }
 
-      const product = PRODUCTS.find(
-        item => item.command === name
+      const product = PRODUCTS.find(item =>
+        item.command === name
       );
 
       if (product) {
@@ -1387,17 +1743,43 @@ client.on(Events.InteractionCreate, async interaction => {
       if (interaction.customId === "ryvora_close_ticket") {
         return closeTicket(interaction);
       }
+
+      if (interaction.customId === "ryvora_claim_ticket") {
+        return claimTicket(interaction);
+      }
+
+      if (interaction.customId.startsWith("ryvora_buy:")) {
+        const productKey = interaction.customId.split(":")[1];
+
+        if (!PRODUCTS.some(p => p.command === productKey)) {
+          return privateReply(interaction, "❌ Product not found.");
+        }
+
+        return createTicket(
+          interaction,
+          "purchase",
+          productKey
+        );
+      }
     }
 
     if (interaction.isStringSelectMenu()) {
-      if (
-        interaction.customId === "ryvora_ticket_category"
-      ) {
-        return createTicket(interaction);
+      if (interaction.customId === "ryvora_ticket_category") {
+        return createTicket(
+          interaction,
+          interaction.values[0]
+        );
       }
     }
+
   } catch (error) {
     errorLog("Interaction error:", error);
+
+    if (error.code === 10062 || error.code === 40060) {
+      return;
+    }
+
+    if (!interaction.isRepliable()) return;
 
     try {
       await privateReply(
@@ -1411,7 +1793,7 @@ client.on(Events.InteractionCreate, async interaction => {
 });
 
 // =====================================================
-// READY EVENT
+// STARTUP
 // =====================================================
 
 client.once(Events.ClientReady, async readyClient => {
@@ -1434,17 +1816,18 @@ client.once(Events.ClientReady, async readyClient => {
     await initializeInvites(guild);
 
     log(`Server: ${guild.name}`);
-    log("Welcome system initialized.");
-    log("Verification system initialized.");
-    log("Ticket system initialized.");
-    log(`Product catalog: ${PRODUCTS.length} products.`);
-    log("Invite competition initialized.");
-    log("All systems ready.");
+    log(`Products loaded: ${PRODUCTS.length}`);
+    log("Ticket system ready.");
+    log("Verification system ready.");
+    log("Welcome system ready.");
+    log("Invite tracking ready.");
+    log("All Ryvora systems initialized.");
+
   } catch (error) {
-    errorLog("Startup failed:", error);
+    errorLog("Startup initialization failed:", error);
   }
 
-  setInterval(async () => {
+  async function competitionTick() {
     try {
       const competition = database.competition;
 
@@ -1458,7 +1841,11 @@ client.once(Events.ClientReady, async readyClient => {
     } catch (error) {
       errorLog("Competition scheduler failed:", error);
     }
-  }, 60000);
+  }
+
+  await competitionTick();
+
+  setInterval(competitionTick, 60000);
 });
 
 // =====================================================
@@ -1473,9 +1860,10 @@ process.on("unhandledRejection", error => {
   errorLog("Unhandled rejection:", error);
 });
 
-// =====================================================
-// LOGIN
-// =====================================================
+process.on("uncaughtException", error => {
+  errorLog("Uncaught exception:", error);
+  process.exitCode = 1;
+});
 
 client.login(CONFIG.token).catch(error => {
   errorLog("Discord login failed:", error);
