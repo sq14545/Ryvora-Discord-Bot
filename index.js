@@ -1,1871 +1,675 @@
 
-require("dotenv").config();
-
+'use strict';
+require('dotenv').config();
+const fs = require('node:fs');
+const path = require('node:path');
 const {
-  Client,
-  GatewayIntentBits,
-  EmbedBuilder,
-  AttachmentBuilder,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  StringSelectMenuBuilder,
-  ChannelType,
-  PermissionFlagsBits,
-  Events,
-  REST,
-  Routes,
-  SlashCommandBuilder,
-  MessageFlags
-} = require("discord.js");
+  Client, GatewayIntentBits, EmbedBuilder, AttachmentBuilder,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder,
+  ChannelType, PermissionFlagsBits: P, Events, REST, Routes,
+  SlashCommandBuilder, MessageFlags
+} = require('discord.js');
 
-const fs = require("node:fs");
-const path = require("node:path");
-
-const CONFIG = {
-  token: process.env.DISCORD_TOKEN,
-  clientId: process.env.CLIENT_ID,
-  guildId: process.env.GUILD_ID,
-  ticketCategoryId: process.env.TICKET_CATEGORY_ID,
-  staffRoleId: process.env.STAFF_ROLE_ID,
-  verifyRoleId: process.env.VERIFY_ROLE_ID,
-  welcomeChannelId: process.env.WELCOME_CHANNEL_ID || "",
-  giveawayChannelId: process.env.GIVEAWAY_CHANNEL_ID || "",
-  inviteLogChannelId: process.env.INVITE_LOG_CHANNEL_ID || "",
-  ticketLogChannelId: process.env.TICKET_LOG_CHANNEL_ID || "",
-  verifyLogChannelId: process.env.VERIFY_LOG_CHANNEL_ID || "",
-  brand: "RYVORA",
-  fullName: "Ryvora - Ultimate Methods",
-  color: 0x8B2CFF,
-  success: 0x57F287,
-  warning: 0xFEE75C,
-  danger: 0xED4245
+const C = {
+  token: process.env.DISCORD_TOKEN, clientId: process.env.CLIENT_ID,
+  guildId: process.env.GUILD_ID, category: process.env.TICKET_CATEGORY_ID,
+  staff: process.env.STAFF_ROLE_ID, verified: process.env.VERIFY_ROLE_ID,
+  welcome: process.env.WELCOME_CHANNEL_ID || '',
+  giveaway: process.env.GIVEAWAY_CHANNEL_ID || '',
+  inviteLog: process.env.INVITE_LOG_CHANNEL_ID || '',
+  ticketLog: process.env.TICKET_LOG_CHANNEL_ID || '',
+  verifyLog: process.env.VERIFY_LOG_CHANNEL_ID || '',
+  purple: 0x8b2cff, green: 0x57f287, yellow: 0xfee75c
 };
+for (const [name, value] of Object.entries({
+  DISCORD_TOKEN: C.token, CLIENT_ID: C.clientId, GUILD_ID: C.guildId,
+  TICKET_CATEGORY_ID: C.category, STAFF_ROLE_ID: C.staff,
+  VERIFY_ROLE_ID: C.verified
+})) if (!value) throw Error(`Missing .env value: ${name}`);
 
-for (const key of [
-  "DISCORD_TOKEN",
-  "CLIENT_ID",
-  "GUILD_ID",
-  "TICKET_CATEGORY_ID",
-  "STAFF_ROLE_ID",
-  "VERIFY_ROLE_ID"
-]) {
-  if (!process.env[key]) {
-    console.error(`[RYVORA] Missing ${key}`);
-    process.exit(1);
-  }
-}
-
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers
-  ]
-});
-
-const DATA_FILE = path.join(__dirname, "ryvora-invites.json");
-const STATE_FILE = path.join(__dirname, "ryvora-state.json");
-
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
+const log = (...x) => console.log('[RYVORA]', ...x);
+const logError = (...x) => console.error('[RYVORA]', ...x);
 const DAY = 86400000;
-const log = (...args) => console.log("[RYVORA]", ...args);
-const errorLog = (...args) => console.error("[RYVORA]", ...args);
-
-// =====================================================
-// IMAGES
-// =====================================================
-
 const IMAGES = {
-  ticket: "ticket.png",
-  verify: "verify.png",
-  welcome: "welcome.png",
-  giveaway: "giveaway.png",
-  leaderboard: "leaderboard.png",
-  inviteLog: "invite-log.png",
-
-  ticketPurchase: "ticket-purchase.png",
-  ticketPreSale: "ticket-pre-sale.png",
-  ticketSupport: "ticket-support.png",
-  ticketHwid: "ticket-hwid.png",
-  ticketMedia: "ticket-media.png",
-
+  ticket: 'ticket.png', verify: 'verify.png', welcome: 'welcome.png',
+  giveaway: 'giveaway.png', leaderboard: 'leaderboard.png', inviteLog: 'invite-log.png',
+  ticketPurchase: 'ticket-purchase.png', ticketPreSale: 'ticket-pre-sale.png',
+  ticketSupport: 'ticket-support.png', ticketHwid: 'ticket-hwid.png',
+  ticketMedia: 'ticket-media.png',
   products: {
-    perm_croofer: "perm-croofer.png",
-    val_showcase: "val-showcase.png",
-    val_color_aim: "val-color-aim.png",
-    val_triggerbot: "val-triggerbot.png",
-    val_unlock_all: "val-unlock-all.png",
-    val_emu: "val-emu.png",
-    fn_retract: "fn-retract.png",
-    retract_showcase: "retract-showcase.png",
-    rust_external: "rust-external.png",
-    fivem_triggerbot: "fivem-triggerbot.png",
-    nvidia_bypass: "nvidia-bypass.png",
-    custom_cleaners: "custom-cleaners.png",
-    tweaks: "tweaks.png",
-    fortnite_accounts: "fortnite-accounts.png",
-    fortnite_vbucks: "fortnite-vbucks.png"
+    perm_croofer: 'perm-croofer.png', val_showcase: 'val-showcase.png',
+    val_color_aim: 'val-color-aim.png', val_triggerbot: 'val-triggerbot.png',
+    val_unlock_all: 'val-unlock-all.png', val_emu: 'val-emu.png',
+    fn_retract: 'fn-retract.png', retract_showcase: 'retract-showcase.png',
+    rust_external: 'rust-external.png', fivem_triggerbot: 'fivem-triggerbot.png',
+    nvidia_bypass: 'nvidia-bypass.png', custom_cleaners: 'custom-cleaners.png',
+    tweaks: 'tweaks.png', fortnite_accounts: 'fortnite-accounts.png',
+    fortnite_vbucks: 'fortnite-vbucks.png'
   }
 };
-
-function attachImage(embed, imageKey, filename) {
-  const envKey = `IMAGE_${imageKey.toUpperCase()}`;
-  const url = process.env[envKey];
-
-  if (url && /^https?:\/\//i.test(url)) {
-    embed.setImage(url);
-    return [];
-  }
-
-  const file = path.join(__dirname, "images", filename);
-
-  if (!fs.existsSync(file)) return [];
-
-  const attachmentName = path.basename(filename);
-
-  embed.setImage(`attachment://${attachmentName}`);
-
-  return [
-    new AttachmentBuilder(file, {
-      name: attachmentName
-    })
-  ];
-}
-
-// =====================================================
-// PRODUCTS - ORIGINAL CATALOG
-// =====================================================
-
 const PRODUCTS = [
-  {
-    command: "perm_croofer",
-    title: "Perm Serial Changer",
-    description: "Permanent serial changer product information.",
-    pricing: "• One Time Use → 24€\n• Unlimited Uses → **49€**"
-  },
-  {
-    command: "val_showcase",
-    title: "VAL Showcase",
-    description: "Features and product information for VAL Showcase.",
-    pricing: process.env.VAL_SHOWCASE_PRICING ||
-      "Contact our team for pricing."
-  },
-  {
-    command: "val_color_aim",
-    title: "Val Colorbot",
-    description: "Features and product information for Val Colorbot.",
-    pricing: "• 1 Day → 10€\n• 1 Week → 24€\n• 1 Month → 40€\n• Lifetime → **168€**"
-  },
-  {
-    command: "val_triggerbot",
-    title: "Val Triggerbot",
-    description: "Features and product information for Val Triggerbot.",
-    pricing: "• 1 Day → 9€\n• 1 Week → 17€\n• 1 Month → 32€\n• Lifetime → **160€**"
-  },
-  {
-    command: "val_unlock_all",
-    title: "Val Unlock All",
-    description: "Features and product information for Val Unlock All.",
-    pricing: "• 1 Day → 13€\n• 1 Week → 23€\n• 1 Month → 42€\n• Lifetime → **163€**"
-  },
-  {
-    command: "val_emu",
-    title: "Val Emulator",
-    description: "Features and product information for Val Emulator.",
-    pricing: "• 3 Days → 43€\n• 1 Week → 64€\n• 1 Month → 105€\n• Lifetime → **250€**"
-  },
-  {
-    command: "fn_retract",
-    title: "FN Retract",
-    description: "Features and product information for FN Retract.",
-    pricing: "• 1 Day → 9€\n• 1 Week → 19€\n• 1 Month → 37€\n• Lifetime → **164€**"
-  },
-  {
-    command: "retract_showcase",
-    title: "Retract Showcase",
-    description: "Features and product information for Retract Showcase.",
-    pricing: process.env.RETRACT_SHOWCASE_PRICING ||
-      "Contact our team for pricing."
-  },
-  {
-    command: "rust_external",
-    title: "Rust External",
-    description: "Features and product information for Rust External.",
-    pricing: "• 1 Day → 10€\n• 1 Week → 32€\n• 1 Month → 60€\n• Lifetime → **350€**"
-  },
-  {
-    command: "fivem_triggerbot",
-    title: "FiveM Triggerbot",
-    description: "Features and product information for FiveM Triggerbot.",
-    pricing: "• 1 Week → 10€\n• 1 Month → 27€\n• Lifetime → **100€**"
-  },
-  {
-    command: "nvidia_bypass",
-    title: "NVIDIA Bypass",
-    description:
-      "NVIDIA Bypass is intended for users who already have a hider and compatible NVIDIA stream-proof software.\n\n" +
-      "It allows a regular black NVIDIA setting/profile to be used without appearing completely black in recordings.\n\n" +
-      "This is not a bypass that makes cheats such as TZX or other cheats stream-proof.",
-    pricing: "• NVIDIA Bypass → **$10**\n• NVIDIA Bypass + Mouse → **$15**"
-  },
-  {
-    command: "custom_cleaners",
-    title: "Custom Cleaners",
-    description:
-      "🧹 **Custom Cleaner Service**\n\n" +
-      "Available products:\n" +
-      "• TZX\n• GOSTH\n• TESTO\n• SKRIPTGG\n\n" +
-      "Optional NVIDIA stream-proof service: $10.\n" +
-      "Contact staff for compatibility and service details.",
-    pricing: "• Price per cleaner → **$35**"
-  },
-  {
-    command: "tweaks",
-    title: "PC Optimization",
-    description:
-      "🚀 **Complete PC Optimization**\n\n" +
-      "• BIOS Tuner\n" +
-      "• Network Adapter Tuner\n" +
-      "• Advanced Hardware Optimization\n" +
-      "• High Priority Customer Support\n" +
-      "• 20+ Advanced Features\n" +
-      "• All Plus Features\n\n" +
-      "Performance improvements depend on your hardware and configuration.",
-    pricing:
-      "• PC Optimization (One Time) → **$30**\n" +
-      "• Re-PC Optimization (after a factory reset) → **$15**"
-  },
-  {
-    command: "fortnite_accounts",
-    title: "Fortnite Accounts",
-    description:
-      "Full-access account listings. Contact staff to confirm availability and ownership-transfer terms.\n\n" +
-      "**Random Skin Accounts**\n" +
-      "• 50+ Random Skins → **$7.99**\n" +
-      "• 100+ Random Skins → **$11.99**\n" +
-      "• 150+ Random Skins → **$24.00**\n" +
-      "• 200+ Random Skins → **$27.00**\n\n" +
-      "**Guaranteed Exclusives**\n" +
-      "• IKONIK → $130\n" +
-      "• Wildcat → $130\n" +
-      "• Glow → $15\n" +
-      "• Galaxy → $78\n" +
-      "• Black Knight → $115\n" +
-      "• Travis Scott → $60\n\n" +
-      "**Other Accounts**\n" +
-      "• PC/PSN/XBOX — 82 skins → **$55**\n" +
-      "• PC/XBOX — 125 skins → **$85**\n" +
-      "• PC/PSN — 108 skins → **$65**\n\n" +
-      "Open a ticket for details.",
-    pricing: "Prices are listed above."
-  },
-  {
-    command: "fortnite_vbucks",
-    title: "Fortnite V-Bucks",
-    description: "Fortnite V-Bucks packages for PC Epic accounts.",
-    pricing:
-      "• PC - Epic → 4,500 V-Bucks → **$40**\n" +
-      "• PC - Epic → 12,500 V-Bucks → **$80**"
-  }
+  { command: 'perm_croofer', title: 'Perm Serial Changer', description: 'Permanent serial changer product information.', pricing: '• One Time Use → 24€\n• Unlimited Uses → **49€**' },
+  { command: 'val_showcase', title: 'VAL Showcase', description: 'Features and product information for VAL Showcase.', pricing: process.env.VAL_SHOWCASE_PRICING || 'Contact our team for pricing.' },
+  { command: 'val_color_aim', title: 'Val Colorbot', description: 'Features and product information for Val Colorbot.', pricing: '• 1 Day → 10€\n• 1 Week → 24€\n• 1 Month → 40€\n• Lifetime → **168€**' },
+  { command: 'val_triggerbot', title: 'Val Triggerbot', description: 'Features and product information for Val Triggerbot.', pricing: '• 1 Day → 9€\n• 1 Week → 17€\n• 1 Month → 32€\n• Lifetime → **160€**' },
+  { command: 'val_unlock_all', title: 'Val Unlock All', description: 'Features and product information for Val Unlock All.', pricing: '• 1 Day → 13€\n• 1 Week → 23€\n• 1 Month → 42€\n• Lifetime → **163€**' },
+  { command: 'val_emu', title: 'Val Emulator', description: 'Features and product information for Val Emulator.', pricing: '• 3 Days → 43€\n• 1 Week → 64€\n• 1 Month → 105€\n• Lifetime → **250€**' },
+  { command: 'fn_retract', title: 'FN Retract', description: 'Features and product information for FN Retract.', pricing: '• 1 Day → 9€\n• 1 Week → 19€\n• 1 Month → 37€\n• Lifetime → **164€**' },
+  { command: 'retract_showcase', title: 'Retract Showcase', description: 'Features and product information for Retract Showcase.', pricing: process.env.RETRACT_SHOWCASE_PRICING || 'Contact our team for pricing.' },
+  { command: 'rust_external', title: 'Rust External', description: 'Features and product information for Rust External.', pricing: '• 1 Day → 10€\n• 1 Week → 32€\n• 1 Month → 60€\n• Lifetime → **350€**' },
+  { command: 'fivem_triggerbot', title: 'FiveM Triggerbot', description: 'Features and product information for FiveM Triggerbot.', pricing: '• 1 Week → 10€\n• 1 Month → 27€\n• Lifetime → **100€**' },
+  { command: 'nvidia_bypass', title: 'NVIDIA Bypass', description: 'NVIDIA Bypass is intended for users who already have a hider and compatible NVIDIA stream-proof software.\n\nIt allows a regular black NVIDIA setting/profile to be used without appearing completely black in recordings.\n\nThis is not a bypass that makes cheats such as TZX or other cheats stream-proof.', pricing: '• NVIDIA Bypass → **$10**\n• NVIDIA Bypass + Mouse → **$15**' },
+  { command: 'custom_cleaners', title: 'Custom Cleaners', description: '🧹 **Custom Cleaner Service**\n\nAvailable products:\n• TZX\n• GOSTH\n• TESTO\n• SKRIPTGG\n\nOptional NVIDIA stream-proof service: $10.\nContact staff for compatibility and service details.', pricing: '• Price per cleaner → **$35**' },
+  { command: 'tweaks', title: 'PC Optimization', description: '🚀 **Complete PC Optimization**\n\n• BIOS Tuner\n• Network Adapter Tuner\n• Advanced Hardware Optimization\n• High Priority Customer Support\n• 20+ Advanced Features\n• All Plus Features\n\nPerformance improvements depend on your hardware and configuration.', pricing: '• PC Optimization (One Time) → **$30**\n• Re-PC Optimization (after a factory reset) → **$15**' },
+  { command: 'fortnite_accounts', title: 'Fortnite Accounts', description: 'Full-access account listings. Contact staff to confirm availability and ownership-transfer terms.\n\n**Random Skin Accounts**\n• 50+ Random Skins → **$7.99**\n• 100+ Random Skins → **$11.99**\n• 150+ Random Skins → **$24.00**\n• 200+ Random Skins → **$27.00**\n\n**Guaranteed Exclusives**\n• IKONIK → $130\n• Wildcat → $130\n• Glow → $15\n• Galaxy → $78\n• Black Knight → $115\n• Travis Scott → $60\n\n**Other Accounts**\n• PC/PSN/XBOX — 82 skins → **$55**\n• PC/XBOX — 125 skins → **$85**\n• PC/PSN — 108 skins → **$65**\n\nOpen a ticket for details.', pricing: 'Prices are listed above.' },
+  { command: 'fortnite_vbucks', title: 'Fortnite V-Bucks', description: 'Fortnite V-Bucks packages for PC Epic accounts.', pricing: '• PC - Epic → 4,500 V-Bucks → **$40**\n• PC - Epic → 12,500 V-Bucks → **$80**' }
 ];
+const productByKey = new Map(PRODUCTS.map(p => [p.command, p]));
 
-// =====================================================
-// DATABASE
-// =====================================================
+const CATEGORIES = {
+  purchase: { name: 'Purchase', emoji: '🛒', image: IMAGES.ticketPurchase },
+  pre_sale: { name: 'Pre-Sale Question', emoji: '❓', image: IMAGES.ticketPreSale },
+  support: { name: 'Support', emoji: '🛠️', image: IMAGES.ticketSupport },
+  hwid_reset: { name: 'HWID Reset', emoji: '🔑', image: IMAGES.ticketHwid },
+  media_reseller: { name: 'Media / Reseller', emoji: '📦', image: IMAGES.ticketMedia }
+};
 
 function readJson(filename, fallback) {
-  try {
-    if (!fs.existsSync(filename)) return fallback;
-    return JSON.parse(fs.readFileSync(filename, "utf8"));
-  } catch (error) {
-    errorLog("Database read error:", error);
-    return fallback;
-  }
+  try { return JSON.parse(fs.readFileSync(filename, 'utf8')); }
+  catch (e) { if (e.code !== 'ENOENT') logError('Data read failed:', filename, e.message); return fallback; }
 }
-
 function writeJson(filename, data) {
-  const temp = filename + ".tmp";
-
-  fs.writeFileSync(
-    temp,
-    JSON.stringify(data, null, 2),
-    "utf8"
-  );
-
+  const temp = filename + '.tmp';
+  fs.writeFileSync(temp, JSON.stringify(data, null, 2));
   fs.renameSync(temp, filename);
 }
-
-const defaultDatabase = () => ({
-  competition: null,
-  members: {},
-  unknownJoins: 0
-});
-
-let database = {
-  ...defaultDatabase(),
-  ...readJson(DATA_FILE, defaultDatabase())
-};
-
-database.members ||= {};
-
-let state = {
-  tickets: {},
-  ...readJson(STATE_FILE, {})
-};
-
+const DB_FILE = path.join(__dirname, 'ryvora-invites.json');
+const STATE_FILE = path.join(__dirname, 'ryvora-state.json');
+let db = { competition: null, members: {}, pending: {}, known: {}, unknownJoins: 0,
+  ...readJson(DB_FILE, {}) };
+let state = { tickets: {}, ...readJson(STATE_FILE, {}) };
+for (const field of ['members', 'pending', 'known']) db[field] ||= {};
 state.tickets ||= {};
+const saveDb = () => writeJson(DB_FILE, db);
+const saveState = () => writeJson(STATE_FILE, state);
 
-function saveDatabase() {
-  writeJson(DATA_FILE, database);
+function embed(title, description, color = C.purple) {
+  return new EmbedBuilder().setColor(color).setTitle(title)
+    .setDescription(description).setFooter({ text: 'Ryvora - Ultimate Methods' }).setTimestamp();
 }
-
-function saveState() {
-  writeJson(STATE_FILE, state);
+function imageFor(e, key, filename) {
+  const url = (process.env[`IMAGE_${key.toUpperCase()}`] || '').trim();
+  if (/^https:\/\//i.test(url)) { e.setImage(url); return []; }
+  if (!filename || filename !== path.basename(filename)) return [];
+  const full = path.join(__dirname, 'images', filename);
+  if (!fs.existsSync(full)) return [];
+  e.setImage('attachment://' + filename);
+  return [new AttachmentBuilder(full, { name: filename })];
 }
-
-function memberStats(id) {
-  database.members[id] ||= {
-    invites: 0,
-    joins: []
-  };
-
-  return database.members[id];
+const admin = i => !!i.memberPermissions?.has(P.Administrator);
+const manager = i => !!i.memberPermissions?.has(P.ManageGuild);
+const staff = i => admin(i) || i.member?.roles?.cache?.has(C.staff) || !!i.memberPermissions?.has(P.ManageChannels);
+async function defer(i) { if (!i.deferred && !i.replied) await i.deferReply({ flags: MessageFlags.Ephemeral }); }
+async function respond(i, data) {
+  const p = typeof data === 'string' ? { content: data } : data;
+  if (i.deferred) return i.editReply(p);
+  if (i.replied) return i.followUp({ ...p, flags: MessageFlags.Ephemeral });
+  return i.reply({ ...p, flags: MessageFlags.Ephemeral });
 }
-
-function baseEmbed(title, description, color = CONFIG.color) {
-  return new EmbedBuilder()
-    .setColor(color)
-    .setTitle(title)
-    .setDescription(description)
-    .setFooter({
-      text: `${CONFIG.fullName} • Official Server`
-    })
-    .setTimestamp();
+async function getTextChannel(guild, id) {
+  if (!id) return null;
+  const c = await guild.channels.fetch(id).catch(() => null);
+  return c?.isTextBased() && typeof c.send === 'function' ? c : null;
 }
-
-function isAdmin(interaction) {
-  return interaction.memberPermissions?.has(
-    PermissionFlagsBits.Administrator
-  ) || false;
+async function logTo(guild, id, payload) {
+  const c = await getTextChannel(guild, id);
+  if (!c) return;
+  await c.send({ ...payload, allowedMentions: { parse: [] } })
+    .catch(e => logError('Log failed:', e.message));
 }
-
-function isStaff(interaction) {
-  return isAdmin(interaction) ||
-    interaction.member?.roles?.cache?.has(CONFIG.staffRoleId) ||
-    interaction.memberPermissions?.has(
-      PermissionFlagsBits.ManageChannels
-    );
-}
-
-async function privateReply(interaction, content) {
-  const payload = typeof content === "string"
-    ? { content }
-    : content;
-
-  if (interaction.deferred) {
-    return interaction.editReply(payload);
-  }
-
-  if (interaction.replied) {
-    return interaction.followUp({
-      ...payload,
-      flags: MessageFlags.Ephemeral
-    });
-  }
-
-  return interaction.reply({
-    ...payload,
-    flags: MessageFlags.Ephemeral
-  });
-}
-
-async function sendLog(guild, channelId, payload) {
-  if (!channelId) return;
-
-  const channel = await guild.channels.fetch(channelId)
-    .catch(() => null);
-
-  if (!channel?.isTextBased()) return;
-
-  await channel.send({
-    ...payload,
-    allowedMentions: { parse: [] }
-  }).catch(error => errorLog("Log delivery failed:", error));
-}
-
-// =====================================================
-// TICKET SYSTEM
-// =====================================================
-
-const TICKET_CATEGORIES = {
-  purchase: {
-    title: "Purchase",
-    emoji: "🛒",
-    description: "Purchase a product",
-    image: IMAGES.ticketPurchase
-  },
-  pre_sale: {
-    title: "Pre-Sale Question",
-    emoji: "❓",
-    description: "Ask before purchasing",
-    image: IMAGES.ticketPreSale
-  },
-  support: {
-    title: "Support",
-    emoji: "🛠️",
-    description: "General assistance",
-    image: IMAGES.ticketSupport
-  },
-  hwid_reset: {
-    title: "HWID Reset",
-    emoji: "🔑",
-    description: "Request an HWID reset",
-    image: IMAGES.ticketHwid
-  },
-  media_reseller: {
-    title: "Media / Reseller",
-    emoji: "📦",
-    description: "Partnership inquiries",
-    image: IMAGES.ticketMedia
-  }
-};
 
 function ticketPanel() {
-  const embed = baseEmbed(
-    "🎫 RYVORA • SUPPORT CENTER",
-    "## PREMIUM SUPPORT\n\n" +
-    "Welcome to our official support center.\n\n" +
-    "🛒 **Purchase** — Place an order\n" +
-    "❓ **Pre-Sale** — Product questions\n" +
-    "🛠️ **Support** — Technical assistance\n" +
-    "🔑 **HWID Reset** — Reset requests\n" +
-    "📦 **Media / Reseller** — Partnerships\n\n" +
-    "━━━━━━━━━━━━━━━━━━━━\n" +
-    "💜 Select your category to create a private ticket."
-  );
-
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId("ryvora_ticket_category")
-    .setPlaceholder("✦ Select a support category")
-    .addOptions(
-      Object.entries(TICKET_CATEGORIES).map(([value, item]) => ({
-        label: item.title,
-        value,
-        description: item.description,
-        emoji: item.emoji
-      }))
-    );
-
-  return {
-    embed,
-    components: [
-      new ActionRowBuilder().addComponents(menu)
-    ]
-  };
+  const e = embed('🎫 RYVORA • SUPPORT CENTER',
+    '## PREMIUM SUPPORT\n\n' +
+    '🛒 **Purchase** — Place an order\n' +
+    '❓ **Pre-Sale** — Product questions\n' +
+    '🛠️ **Support** — Technical assistance\n' +
+    '🔑 **HWID Reset** — Reset requests\n' +
+    '📦 **Media / Reseller** — Partnerships\n\n' +
+    '💜 Select a category to open a private ticket.');
+  const menu = new StringSelectMenuBuilder().setCustomId('ryvora_ticket_category')
+    .setPlaceholder('✦ Select a support category').addOptions(
+      Object.entries(CATEGORIES).map(([value, x]) => ({ label: x.name, value, emoji: x.emoji })));
+  return { embeds: [e], components: [new ActionRowBuilder().addComponents(menu)],
+    files: imageFor(e, 'TICKET', IMAGES.ticket) };
 }
-
+function verifyPanel() {
+  const e = embed('🔐 RYVORA • VERIFICATION',
+    '## WELCOME TO RYVORA\n\nRead the rules, then click **Verify & Unlock** to receive access. 💜');
+  const b = new ButtonBuilder().setCustomId('ryvora_verify').setLabel('Verify & Unlock')
+    .setEmoji('✅').setStyle(ButtonStyle.Success);
+  return { embeds: [e], files: imageFor(e, 'VERIFY', IMAGES.verify),
+    components: [new ActionRowBuilder().addComponents(b)] };
+}
 function ticketButtons(claimed = false) {
-  return [
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId("ryvora_claim_ticket")
-        .setLabel(claimed ? "Claimed" : "Claim Ticket")
-        .setEmoji("🙋")
-        .setStyle(ButtonStyle.Primary)
-        .setDisabled(claimed),
-
-      new ButtonBuilder()
-        .setCustomId("ryvora_close_ticket")
-        .setLabel("Close Ticket")
-        .setEmoji("🔒")
-        .setStyle(ButtonStyle.Danger)
-    )
-  ];
+  return [new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('ryvora_claim_ticket').setLabel(claimed ? 'Claimed' : 'Claim Ticket')
+      .setEmoji('🙋').setStyle(ButtonStyle.Primary).setDisabled(claimed),
+    new ButtonBuilder().setCustomId('ryvora_close_ticket').setLabel('Close Ticket')
+      .setEmoji('🔒').setStyle(ButtonStyle.Danger)
+  )];
 }
-
 const ticketLocks = new Set();
-
-async function createTicket(interaction, categoryKey, productKey = null) {
-  await interaction.deferReply({
-    flags: MessageFlags.Ephemeral
-  });
-
-  const category = TICKET_CATEGORIES[categoryKey];
-
-  if (!category) {
-    return interaction.editReply("❌ Invalid ticket category.");
-  }
-
-  const guild = interaction.guild;
-  const lockKey = `${guild.id}:${interaction.user.id}`;
-
-  if (ticketLocks.has(lockKey)) {
-    return interaction.editReply("⏳ Your ticket is being created.");
-  }
-
-  ticketLocks.add(lockKey);
-
+const ownerFrom = channel => channel?.topic?.match(/(?:^|\|)ticket-owner:(\d+)/)?.[1] || null;
+function activeTicket(channel) {
+  return channel?.type === ChannelType.GuildText && channel.parentId === C.category && !!ownerFrom(channel);
+}
+async function createTicket(i, categoryKey, productKey = null) {
+  await defer(i);
+  const category = CATEGORIES[categoryKey];
+  if (!category) return respond(i, '❌ Invalid category.');
+  const lock = `${i.guildId}:${i.user.id}`;
+  if (ticketLocks.has(lock)) return respond(i, '⏳ Ticket creation is already running.');
+  ticketLocks.add(lock);
+  let created = null;
   try {
-    const parent = await guild.channels
-      .fetch(CONFIG.ticketCategoryId)
-      .catch(() => null);
-
-    if (parent?.type !== ChannelType.GuildCategory) {
-      return interaction.editReply(
-        "❌ Ticket category is not configured correctly."
-      );
-    }
-
+    const guild = i.guild;
+    const parent = await guild.channels.fetch(C.category).catch(() => null);
+    if (parent?.type !== ChannelType.GuildCategory) return respond(i, '❌ TICKET_CATEGORY_ID must point to a category.');
     const bot = await guild.members.fetchMe();
-
-    if (!bot.permissions.has(PermissionFlagsBits.ManageChannels)) {
-      return interaction.editReply(
-        "❌ Bot requires Manage Channels permission."
-      );
-    }
-
-    const staffRole = await guild.roles
-      .fetch(CONFIG.staffRoleId)
-      .catch(() => null);
-
-    if (!staffRole) {
-      return interaction.editReply("❌ Staff role not found.");
-    }
-
+    if (!bot.permissions.has(P.ManageChannels)) return respond(i, '❌ Bot needs Manage Channels.');
+    if (!await guild.roles.fetch(C.staff).catch(() => null)) return respond(i, '❌ STAFF_ROLE_ID role not found.');
     await guild.channels.fetch();
-
-    const existing = guild.channels.cache.find(channel =>
-      channel.type === ChannelType.GuildText &&
-      channel.parentId === CONFIG.ticketCategoryId &&
-      channel.topic?.startsWith(
-        `ticket-owner:${interaction.user.id}`
-      )
-    );
-
-    if (existing) {
-      return interaction.editReply(
-        `⚠️ You already have a ticket: ${existing}`
-      );
-    }
-
-    const channel = await guild.channels.create({
-      name: `ticket-${categoryKey}-${interaction.user.id}`,
-      type: ChannelType.GuildText,
-      parent: CONFIG.ticketCategoryId,
-      topic: `ticket-owner:${interaction.user.id}|category:${categoryKey}`,
+    const existing = guild.channels.cache.find(ch => activeTicket(ch) && ownerFrom(ch) === i.user.id);
+    if (existing) return respond(i, `⚠️ You already have an open ticket: ${existing}`);
+    const product = productByKey.get(productKey);
+    created = await guild.channels.create({
+      name: `ticket-${categoryKey}-${i.user.id}`.slice(0, 95),
+      type: ChannelType.GuildText, parent: C.category,
+      topic: `ticket-owner:${i.user.id}|category:${categoryKey}`,
       permissionOverwrites: [
-        {
-          id: guild.roles.everyone.id,
-          deny: [PermissionFlagsBits.ViewChannel]
-        },
-        {
-          id: interaction.user.id,
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.ReadMessageHistory,
-            PermissionFlagsBits.AttachFiles
-          ]
-        },
-        {
-          id: CONFIG.staffRoleId,
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.ReadMessageHistory,
-            PermissionFlagsBits.AttachFiles
-          ]
-        },
-        {
-          id: client.user.id,
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.ReadMessageHistory,
-            PermissionFlagsBits.ManageChannels
-          ]
-        }
+        { id: guild.id, deny: [P.ViewChannel] },
+        { id: i.user.id, allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.AttachFiles] },
+        { id: C.staff, allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.AttachFiles] },
+        { id: bot.id, allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.ManageChannels, P.AttachFiles] }
       ]
     });
-
-    const product = PRODUCTS.find(p => p.command === productKey);
-
-    state.tickets[channel.id] = {
-      ownerId: interaction.user.id,
-      category: categoryKey,
-      product: productKey,
-      claimedBy: null,
-      createdAt: Date.now()
-    };
-
+    const e = embed(`${category.emoji} RYVORA • ${category.name}`,
+      `Welcome <@${i.user.id}>!\n\n**Category:** ${category.name}\n` +
+      (product ? `**Product:** ${product.title}\n` : '') +
+      '\nDescribe your request clearly. Our team will help you.');
+    const imageKeys = { purchase: 'TICKET_PURCHASE', pre_sale: 'TICKET_PRE_SALE',
+      support: 'TICKET_SUPPORT', hwid_reset: 'TICKET_HWID', media_reseller: 'TICKET_MEDIA' };
+    await created.send({
+      content: `<@${i.user.id}> <@&${C.staff}>`, embeds: [e],
+      components: ticketButtons(), files: imageFor(e, imageKeys[categoryKey], category.image),
+      allowedMentions: { users: [i.user.id], roles: [C.staff] }
+    });
+    state.tickets[created.id] = { ownerId: i.user.id, category: categoryKey,
+      product: productKey, claimedBy: null, createdAt: Date.now() };
     saveState();
-
-    const embed = baseEmbed(
-      `${category.emoji} RYVORA • ${category.title}`,
-      `Welcome <@${interaction.user.id}>!\n\n` +
-      `**Category:** ${category.title}\n` +
-      (product ? `**Product:** ${product.title}\n` : "") +
-      "\nPlease describe your request clearly.\n\n" +
-      "Our support team will assist you.\n\n" +
-      "━━━━━━━━━━━━━━━━━━━━\n" +
-      "🔒 Use the buttons below to manage this ticket."
-    );
-
-    const imageKey = `TICKET_${categoryKey.toUpperCase()}`;
-
-    const files = attachImage(
-      embed,
-      imageKey,
-      category.image
-    );
-
-    await channel.send({
-      content: `<@${interaction.user.id}> <@&${CONFIG.staffRoleId}>`,
-      embeds: [embed],
-      components: ticketButtons(),
-      files,
-      allowedMentions: {
-        users: [interaction.user.id],
-        roles: [CONFIG.staffRoleId]
-      }
-    });
-
-    await interaction.editReply({
-      content: `✅ Your ticket has been created: ${channel}`
-    });
-
-    await sendLog(guild, CONFIG.ticketLogChannelId, {
-      embeds: [
-        baseEmbed(
-          "🎫 RYVORA • TICKET CREATED",
-          `**Owner:** <@${interaction.user.id}>\n` +
-          `**Category:** ${category.title}\n` +
-          `**Channel:** ${channel}`
-        )
-      ]
-    });
-
-  } finally {
-    ticketLocks.delete(lockKey);
-  }
+    await respond(i, `✅ Your ticket is ready: ${created}`);
+    await logTo(guild, C.ticketLog, { embeds: [embed('🎫 TICKET CREATED',
+      `**Owner:** <@${i.user.id}>\n**Category:** ${category.name}\n**Channel:** ${created}`)] });
+  } catch (e) {
+    if (created) await created.delete('Ticket setup failed').catch(() => {});
+    if (created) { delete state.tickets[created.id]; saveState(); }
+    throw e;
+  } finally { ticketLocks.delete(lock); }
 }
-
-function ticketOwnerId(channel) {
-  return channel?.topic?.match(/ticket-owner:(\d+)/)?.[1] || null;
-}
-
-async function claimTicket(interaction) {
-  await interaction.deferReply({
-    flags: MessageFlags.Ephemeral
-  });
-
-  if (!isStaff(interaction)) {
-    return interaction.editReply("❌ Staff only.");
-  }
-
-  const channel = interaction.channel;
-  const ownerId = ticketOwnerId(channel);
-
-  if (!ownerId || channel.parentId !== CONFIG.ticketCategoryId) {
-    return interaction.editReply("❌ Invalid ticket.");
-  }
-
-  const ticket = state.tickets[channel.id] || {
-    ownerId,
-    category: "support",
-    claimedBy: null,
-    createdAt: Date.now()
-  };
-
-  if (ticket.claimedBy) {
-    return interaction.editReply(
-      `⚠️ Already claimed by <@${ticket.claimedBy}>.`
-    );
-  }
-
-  ticket.claimedBy = interaction.user.id;
-  state.tickets[channel.id] = ticket;
+async function claimTicket(i) {
+  await defer(i);
+  if (!staff(i)) return respond(i, '❌ Staff only.');
+  if (!activeTicket(i.channel)) return respond(i, '❌ This is not a ticket.');
+  const t = state.tickets[i.channelId] ||= { ownerId: ownerFrom(i.channel),
+    category: 'support', claimedBy: null, createdAt: Date.now() };
+  if (t.claimedBy) return respond(i, `⚠️ Already claimed by <@${t.claimedBy}>.`);
+  t.claimedBy = i.user.id;
   saveState();
-
-  await interaction.message.edit({
-    components: ticketButtons(true)
-  });
-
-  await channel.send({
-    embeds: [
-      baseEmbed(
-        "💜 RYVORA • STAFF ASSIGNED",
-        `🙋 <@${interaction.user.id}> has claimed this ticket.`
-      )
-    ],
-    allowedMentions: { parse: [] }
-  });
-
-  await interaction.editReply("✅ Ticket claimed successfully.");
+  await i.message.edit({ components: ticketButtons(true) });
+  await i.channel.send({ embeds: [embed('💜 STAFF ASSIGNED', `<@${i.user.id}> claimed this ticket.`)],
+    allowedMentions: { parse: [] } });
+  return respond(i, '✅ Ticket claimed.');
 }
-
-async function createTranscript(channel) {
-  const messages = [];
+async function transcript(channel) {
   let before;
-
+  const messages = [];
   for (let page = 0; page < 20; page++) {
-    const batch = await channel.messages.fetch({
-      limit: 100,
-      ...(before ? { before } : {})
-    });
-
+    const batch = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) });
     if (!batch.size) break;
-
     messages.push(...batch.values());
     before = batch.last().id;
-
     if (batch.size < 100) break;
   }
-
   messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-
-  const lines = [
-    `RYVORA TICKET TRANSCRIPT`,
-    `Channel: ${channel.name}`,
-    `Channel ID: ${channel.id}`,
-    `Generated: ${new Date().toISOString()}`,
-    `Messages captured: ${messages.length}`,
-    "-----------------------------------------"
-  ];
-
-  for (const message of messages) {
-    const timestamp = new Date(message.createdTimestamp)
-      .toISOString();
-
-    lines.push(
-      `[${timestamp}] ${message.author.tag} (${message.author.id})`
-    );
-
-    if (message.content) {
-      lines.push(message.content);
-    }
-
-    for (const attachment of message.attachments.values()) {
-      lines.push(`Attachment: ${attachment.url}`);
-    }
-
-    lines.push("");
+  const lines = [`RYVORA TRANSCRIPT`, `Channel: ${channel.name} (${channel.id})`,
+    `Generated: ${new Date().toISOString()}`, `Messages: ${messages.length}`, '---'];
+  for (const m of messages) {
+    lines.push(`[${new Date(m.createdTimestamp).toISOString()}] ${m.author?.tag || 'Unknown'} (${m.author?.id || '?'})`);
+    if (m.content) lines.push(m.content);
+    for (const a of m.attachments.values()) lines.push('Attachment: ' + a.url);
+    lines.push('');
   }
-
-  const buffer = Buffer.from(lines.join("\n"), "utf8");
-
-  if (buffer.length > 7 * 1024 * 1024) {
-    return null;
-  }
-
-  return new AttachmentBuilder(buffer, {
-    name: `ryvora-ticket-${channel.id}.txt`
-  });
+  const buffer = Buffer.from(lines.join('\n'), 'utf8');
+  return buffer.length <= 7 * 1024 * 1024
+    ? new AttachmentBuilder(buffer, { name: `ryvora-ticket-${channel.id}.txt` }) : null;
 }
-
-async function closeTicket(interaction) {
-  await interaction.deferReply({
-    flags: MessageFlags.Ephemeral
-  });
-
-  const channel = interaction.channel;
-  const ownerId = ticketOwnerId(channel);
-
-  if (
-    !ownerId ||
-    channel.parentId !== CONFIG.ticketCategoryId
-  ) {
-    return interaction.editReply("❌ Invalid ticket.");
-  }
-
-  if (interaction.user.id !== ownerId && !isStaff(interaction)) {
-    return interaction.editReply(
-      "❌ Only the ticket owner or staff can close this ticket."
-    );
-  }
-
-  if (ticketLocks.has(channel.id)) {
-    return interaction.editReply("⏳ Ticket is already closing.");
-  }
-
-  ticketLocks.add(channel.id);
-
+async function closeTicket(i) {
+  await defer(i);
+  if (!activeTicket(i.channel)) return respond(i, '❌ This is not a ticket.');
+  const owner = ownerFrom(i.channel);
+  if (i.user.id !== owner && !staff(i)) return respond(i, '❌ Only owner or staff may close.');
+  if (ticketLocks.has(i.channelId)) return respond(i, '⏳ Ticket already closing.');
+  ticketLocks.add(i.channelId);
   try {
-    await interaction.editReply(
-      "🔒 Closing ticket and saving transcript..."
-    );
-
-    let transcript = null;
-
-    try {
-      transcript = await createTranscript(channel);
-    } catch (error) {
-      errorLog("Transcript generation failed:", error);
-    }
-
-    const ticket = state.tickets[channel.id];
-
-    await sendLog(interaction.guild, CONFIG.ticketLogChannelId, {
-      embeds: [
-        baseEmbed(
-          "🔒 RYVORA • TICKET CLOSED",
-          `**Channel:** ${channel.name}\n` +
-          `**Owner:** <@${ownerId}>\n` +
-          `**Closed By:** <@${interaction.user.id}>\n` +
-          `**Category:** ${ticket?.category || "Unknown"}\n` +
-          `**Claimed By:** ${
-            ticket?.claimedBy
-              ? `<@${ticket.claimedBy}>`
-              : "Not claimed"
-          }`
-        )
-      ],
-      files: transcript ? [transcript] : []
-    });
-
-    await channel.delete(
-      `Ticket closed by ${interaction.user.tag}`
-    );
-
-    delete state.tickets[channel.id];
-    saveState();
-
-  } finally {
-    ticketLocks.delete(channel.id);
-  }
+    await respond(i, '🔒 Saving transcript and closing ticket...');
+    let file = null;
+    try { file = await transcript(i.channel); }
+    catch (e) { logError('Transcript error:', e); }
+    const t = state.tickets[i.channelId];
+    await logTo(i.guild, C.ticketLog, { embeds: [embed('🔒 TICKET CLOSED',
+      `**Channel:** ${i.channel.name}\n**Owner:** <@${owner}>\n**Closed by:** <@${i.user.id}>\n` +
+      `**Category:** ${t?.category || 'unknown'}\n**Claimed by:** ${t?.claimedBy ? `<@${t.claimedBy}>` : 'None'}`)],
+      files: file ? [file] : [] });
+    await i.channel.delete(`Closed by ${i.user.id}`);
+    delete state.tickets[i.channelId]; saveState();
+  } finally { ticketLocks.delete(i.channelId); }
 }
 
-// =====================================================
-// VERIFICATION
-// =====================================================
-
-function verifyPanel() {
-  return baseEmbed(
-    "🔐 RYVORA • VERIFICATION",
-    "## WELCOME TO RYVORA\n\n" +
-    "Unlock access to our community in seconds.\n\n" +
-    "✦ Read the server rules.\n" +
-    "✦ Click the button below.\n" +
-    "✦ Receive your verified role.\n\n" +
-    "━━━━━━━━━━━━━━━━━━━━\n" +
-    "💜 Click **Verify & Unlock** to continue."
-  );
-}
-
-async function verifyMember(interaction) {
-  await interaction.deferReply({
-    flags: MessageFlags.Ephemeral
-  });
-
-  const guild = interaction.guild;
-  const member = await guild.members.fetch(interaction.user.id);
-  const role = await guild.roles.fetch(CONFIG.verifyRoleId);
-  const bot = await guild.members.fetchMe();
-
-  if (!role) {
-    return interaction.editReply("❌ Verify role not found.");
-  }
-
-  if (!bot.permissions.has(PermissionFlagsBits.ManageRoles)) {
-    return interaction.editReply("❌ Bot needs Manage Roles.");
-  }
-
-  if (bot.roles.highest.position <= role.position) {
-    return interaction.editReply(
-      "❌ Move the bot role above the Verify role."
-    );
-  }
-
-  if (member.roles.cache.has(role.id)) {
-    return interaction.editReply("💜 You are already verified!");
-  }
-
-  await member.roles.add(role, "Ryvora verification");
-
-  await interaction.editReply(
-    "✅ **Verification Successful!** Welcome to Ryvora! 💜"
-  );
-
-  await sendLog(guild, CONFIG.verifyLogChannelId, {
-    embeds: [
-      baseEmbed(
-        "🔐 RYVORA • MEMBER VERIFIED",
-        `**Member:** <@${member.id}>\n` +
-        `**Role:** <@&${role.id}>`
-      )
-    ]
-  });
-}
-
-// =====================================================
-// WELCOME
-// =====================================================
-
-async function getWelcomeChannel(guild) {
-  if (CONFIG.welcomeChannelId) {
-    const channel = await guild.channels
-      .fetch(CONFIG.welcomeChannelId)
-      .catch(() => null);
-
-    if (channel?.isTextBased()) return channel;
-  }
-
-  await guild.channels.fetch();
-
-  return guild.channels.cache.find(channel =>
-    channel.type === ChannelType.GuildText &&
-    ["welcome", "welcomes", "welcome-members"]
-      .some(name => channel.name.toLowerCase().includes(name))
-  );
-}
-
-async function sendWelcome(member) {
-  const channel = await getWelcomeChannel(member.guild);
-
-  if (!channel) return false;
-
-  const embed = baseEmbed(
-    "💜 RYVORA • WELCOME",
-    `## WELCOME TO RYVORA!\n\n` +
-    `Hey ${member}! 👋\n\n` +
-    `Welcome to **${CONFIG.fullName}**.\n\n` +
-    "🔐 **Verify** — Unlock the server\n" +
-    "🎫 **Support** — Open a private ticket\n" +
-    "🛒 **Products** — Explore our catalog\n" +
-    "🎉 **Giveaways** — Join competitions\n\n" +
-    `👥 **Member #${member.guild.memberCount}**`
-  ).setThumbnail(
-    member.user.displayAvatarURL({ size: 256 })
-  );
-
-  const files = attachImage(embed, "WELCOME", IMAGES.welcome);
-
-  await channel.send({
-    content: `💜 Welcome ${member}!`,
-    embeds: [embed],
-    files,
-    allowedMentions: {
-      users: [member.id],
-      parse: []
-    }
-  });
-
-  return true;
-}
-
-// =====================================================
-// INVITE TRACKING
-// =====================================================
-
+// Invite credit is awarded on successful verification, not simply on join.
 const inviteCache = new Map();
 let inviteQueue = Promise.resolve();
-
-function queueInviteOperation(operation) {
-  const result = inviteQueue.then(operation);
-
-  inviteQueue = result.catch(error => {
-    errorLog("Invite queue failed:", error);
-  });
-
-  return result;
+function queued(operation) {
+  const r = inviteQueue.then(operation);
+  inviteQueue = r.catch(e => logError('Invite queue:', e));
+  return r;
 }
-
-async function fetchInviteSnapshot(guild) {
-  const invites = await guild.invites.fetch();
-
-  return new Map(
-    invites.map(invite => [
-      invite.code,
-      {
-        uses: invite.uses || 0,
-        inviterId: invite.inviterId || invite.inviter?.id || null
-      }
-    ])
-  );
+async function snapshot(guild) {
+  const list = await guild.invites.fetch();
+  return new Map(list.map(x => [x.code, { uses: x.uses || 0, inviter: x.inviterId || x.inviter?.id || null }]));
 }
-
-async function initializeInvites(guild) {
-  try {
-    const snapshot = await fetchInviteSnapshot(guild);
-    inviteCache.set(guild.id, snapshot);
-    log(`Invite tracking initialized: ${snapshot.size} links.`);
-  } catch (error) {
-    errorLog("Invite initialization failed:", error);
-  }
+async function initInvites(guild) {
+  try { inviteCache.set(guild.id, await snapshot(guild)); log('Invites cached.'); }
+  catch (e) { logError('Manage Server permission required for invites:', e.message); }
 }
-
-function competitionActive() {
-  return Boolean(
-    database.competition?.active &&
-    Date.now() < database.competition.endsAt
-  );
-}
-
-function getLeaderboard() {
-  return Object.entries(database.members)
-    .map(([id, stats]) => ({
-      id,
-      invites: stats.invites || 0
-    }))
-    .filter(item => item.invites > 0)
-    .sort((a, b) =>
-      b.invites - a.invites || a.id.localeCompare(b.id)
-    );
-}
-
-async function trackMemberJoin(member) {
-  const guild = member.guild;
-  const previous = inviteCache.get(guild.id);
-
+const active = () => !!db.competition?.active && Date.now() < db.competition.endsAt;
+const ranking = () => Object.entries(db.members)
+  .map(([id, x]) => ({ id, count: x.joins?.length || 0 }))
+  .filter(x => x.count > 0).sort((a, b) => b.count - a.count || a.id.localeCompare(b.id));
+function isKnown(id) { return !!db.known[id] || Object.values(db.members).some(x => x.joins?.includes(id)); }
+async function joined(member) {
+  const old = inviteCache.get(member.guild.id);
   let current;
-
-  try {
-    current = await fetchInviteSnapshot(guild);
-  } catch (error) {
-    errorLog("Invite fetch failed:", error);
-
-    return {
-      status: "unknown",
-      inviterId: null
-    };
+  try { current = await snapshot(member.guild); }
+  catch (e) { logError('Invite fetch:', e.message); return { status: 'unknown' }; }
+  inviteCache.set(member.guild.id, current);
+  const found = [];
+  if (old) for (const [code, x] of current) {
+    const p = old.get(code);
+    if (p && x.uses > p.uses && x.inviter) found.push({ inviter: x.inviter, diff: x.uses - p.uses });
   }
-
-  inviteCache.set(guild.id, current);
-
-  const unknown = () => {
-    if (competitionActive()) {
-      database.unknownJoins++;
-      saveDatabase();
-    }
-
-    return {
-      status: "unknown",
-      inviterId: null
-    };
-  };
-
-  if (!previous) return unknown();
-
-  const candidates = [];
-
-  for (const [code, invite] of current) {
-    const old = previous.get(code);
-
-    // Only compare links present in the previous snapshot.
-    if (!old) continue;
-
-    const difference = invite.uses - old.uses;
-
-    if (difference > 0 && invite.inviterId) {
-      candidates.push({
-        code,
-        inviterId: invite.inviterId,
-        difference
-      });
-    }
-  }
-
-  if (
-    candidates.length !== 1 ||
-    candidates[0].difference !== 1
-  ) {
-    return unknown();
-  }
-
-  const inviterId = candidates[0].inviterId;
-
-  if (member.user.bot) {
-    return { status: "bot", inviterId };
-  }
-
-  if (inviterId === member.id) {
-    return { status: "self", inviterId };
-  }
-
-  if (Date.now() - member.user.createdTimestamp < 7 * DAY) {
-    return { status: "new_account", inviterId };
-  }
-
-  if (!competitionActive()) {
-    return { status: "inactive", inviterId };
-  }
-
-  const duplicate = Object.values(database.members)
-    .some(stats => stats.joins?.includes(member.id));
-
-  if (duplicate) {
-    return { status: "duplicate", inviterId };
-  }
-
-  const stats = memberStats(inviterId);
-
-  stats.invites++;
-  stats.joins.push(member.id);
-
-  saveDatabase();
-
-  log(`Invite credited: ${inviterId} -> ${member.id}`);
-
-  return {
-    status: "valid",
-    inviterId,
-    total: stats.invites
-  };
+  const inviter = found.length === 1 && found[0].diff === 1 ? found[0].inviter : null;
+  let status = 'pending';
+  if (!inviter) status = 'unknown';
+  else if (member.user.bot) status = 'bot';
+  else if (inviter === member.id) status = 'self';
+  else if (Date.now() - member.user.createdTimestamp < 7 * DAY) status = 'new_account';
+  else if (!active()) status = 'inactive';
+  else if (isKnown(member.id)) status = 'duplicate';
+  if (status === 'pending') db.pending[member.id] = { inviter, at: Date.now() };
+  else if (status === 'unknown' && active()) db.unknownJoins++;
+  saveDb();
+  return { status, inviter };
 }
-
-async function sendInviteLog(member, result) {
-  if (!CONFIG.inviteLogChannelId) return;
-
-  const statuses = {
-    valid: "✅ Valid Invite",
-    bot: "❌ Bot Account",
-    self: "❌ Self Invite",
-    new_account: "❌ Account Under 7 Days Old",
-    duplicate: "❌ Duplicate Invite",
-    inactive: "ℹ️ No Active Competition",
-    unknown: "⚠️ Could Not Verify Inviter"
-  };
-
-  const inviterId = result?.inviterId;
-  const status = result?.status || "unknown";
-
-  const embed = baseEmbed(
-    "📨 RYVORA • NEW MEMBER INVITE",
-    `👤 **Joined:** <@${member.id}>\n\n` +
-    `📨 **Invited By:** ${
-      inviterId ? `<@${inviterId}>` : "Unknown"
-    }\n\n` +
-    `🏆 **Valid Invites:** ${
-      inviterId ? (database.members[inviterId]?.invites || 0) : 0
-    }\n\n` +
-    `📊 **Status:** ${statuses[status] || statuses.unknown}\n\n` +
-    `🆔 **Member ID:** \`${member.id}\``,
-    status === "valid" ? CONFIG.success : CONFIG.warning
-  ).setThumbnail(member.user.displayAvatarURL());
-
-  const files = attachImage(
-    embed,
-    "INVITE_LOG",
-    IMAGES.inviteLog
-  );
-
-  await sendLog(member.guild, CONFIG.inviteLogChannelId, {
-    embeds: [embed],
-    files
+async function creditVerified(member) {
+  return queued(async () => {
+    const pending = db.pending[member.id];
+    if (!pending) return false;
+    delete db.pending[member.id];
+    if (!active() || pending.at < db.competition.startsAt || isKnown(member.id)) { saveDb(); return false; }
+    const inviter = pending.inviter;
+    if (!inviter || inviter === member.id) { saveDb(); return false; }
+    const stats = db.members[inviter] ||= { invites: 0, joins: [] };
+    stats.joins ||= [];
+    stats.joins.push(member.id);
+    stats.invites = stats.joins.length;
+    db.known[member.id] = true;
+    saveDb();
+    log(`Verified invite credited: ${inviter} -> ${member.id}`);
+    await logTo(member.guild, C.inviteLog, { embeds: [embed('✅ VERIFIED INVITE CREDITED',
+      `**Joined:** <@${member.id}>\n**Inviter:** <@${inviter}>\n**Total:** ${stats.invites}`, C.green)] });
+    return true;
   });
 }
-
-client.on(Events.InviteCreate, invite => {
-  if (invite.guild?.id !== CONFIG.guildId) return;
-
-  queueInviteOperation(async () => {
-    const cache = inviteCache.get(invite.guild.id);
-
-    if (cache) {
-      cache.set(invite.code, {
-        uses: invite.uses || 0,
-        inviterId: invite.inviterId || invite.inviter?.id || null
-      });
-    } else {
-      await initializeInvites(invite.guild);
+async function inviteLog(member, info) {
+  const statuses = { pending: '⏳ Awaiting verification', bot: '❌ Bot', self: '❌ Self invite',
+    new_account: '❌ Account younger than 7 days', inactive: 'ℹ️ No active competition',
+    duplicate: '❌ Previously counted', unknown: '⚠️ Unverifiable invite' };
+  const e = embed('📨 RYVORA • INVITE LOG',
+    `**Joined:** <@${member.id}>\n**Inviter:** ${info.inviter ? `<@${info.inviter}>` : 'Unknown'}\n` +
+    `**Status:** ${statuses[info.status] || info.status}`);
+  await logTo(member.guild, C.inviteLog, { embeds: [e], files: imageFor(e, 'INVITE_LOG', IMAGES.inviteLog) });
+}
+client.on(Events.InviteCreate, x => {
+  if (x.guild?.id !== C.guildId) return;
+  queued(async () => {
+    const cache = inviteCache.get(x.guild.id);
+    if (cache) cache.set(x.code, { uses: x.uses || 0, inviter: x.inviterId || x.inviter?.id || null });
+    else await initInvites(x.guild);
+  });
+});
+client.on(Events.InviteDelete, x => {
+  if (x.guild?.id === C.guildId) queued(async () => inviteCache.get(x.guild.id)?.delete(x.code));
+});
+client.on(Events.GuildMemberAdd, async m => {
+  if (m.guild.id !== C.guildId) return;
+  try { const info = await queued(() => joined(m)); await inviteLog(m, info); }
+  catch (e) { logError('Join/invite:', e); }
+  try { await welcome(m); } catch (e) { logError('Welcome:', e); }
+});
+client.on(Events.GuildMemberRemove, async m => {
+  if (m.guild.id !== C.guildId) return;
+  await queued(async () => {
+    delete db.pending[m.id];
+    for (const x of Object.values(db.members)) {
+      const n = x.joins?.indexOf(m.id) ?? -1;
+      if (n >= 0) { x.joins.splice(n, 1); x.invites = x.joins.length; }
     }
-  }).catch(error => errorLog("InviteCreate failed:", error));
+    // Keep known members to avoid repeat-join farming during same contest.
+    saveDb();
+  });
 });
 
-client.on(Events.InviteDelete, invite => {
-  if (invite.guild?.id !== CONFIG.guildId) return;
-
-  queueInviteOperation(async () => {
-    inviteCache.get(invite.guild.id)?.delete(invite.code);
-  }).catch(error => errorLog("InviteDelete failed:", error));
-});
-
-client.on(Events.GuildMemberAdd, async member => {
-  if (member.guild.id !== CONFIG.guildId) return;
-
-  try {
-    const result = await queueInviteOperation(
-      () => trackMemberJoin(member)
-    );
-
-    await sendInviteLog(member, result);
-  } catch (error) {
-    errorLog("Invite tracking failed:", error);
+async function verifyMember(i) {
+  await defer(i);
+  const guild = i.guild;
+  const member = await guild.members.fetch(i.user.id);
+  const role = await guild.roles.fetch(C.verified).catch(() => null);
+  const bot = await guild.members.fetchMe();
+  if (!role) return respond(i, '❌ VERIFY_ROLE_ID was not found.');
+  if (!bot.permissions.has(P.ManageRoles) || bot.roles.highest.position <= role.position)
+    return respond(i, '❌ Enable Manage Roles and move the bot role above the Verify role.');
+  if (member.roles.cache.has(role.id)) return respond(i, '💜 You are already verified.');
+  await member.roles.add(role, 'Ryvora verification');
+  await respond(i, '✅ Verification successful. Welcome to Ryvora! 💜');
+  await creditVerified(member);
+  await logTo(guild, C.verifyLog, { embeds: [embed('🔐 MEMBER VERIFIED',
+    `**Member:** <@${member.id}>\n**Role:** <@&${role.id}>`)] });
+}
+async function welcome(member) {
+  let channel = await getTextChannel(member.guild, C.welcome);
+  if (!channel) {
+    await member.guild.channels.fetch();
+    channel = member.guild.channels.cache.find(x => x.type === ChannelType.GuildText &&
+      ['welcome', 'welcomes'].some(t => x.name.toLowerCase().includes(t)));
   }
-
-  try {
-    await sendWelcome(member);
-  } catch (error) {
-    errorLog("Welcome failed:", error);
-  }
-});
-
-client.on(Events.GuildMemberRemove, async member => {
-  if (member.guild.id !== CONFIG.guildId) return;
-
-  let changed = false;
-
-  for (const stats of Object.values(database.members)) {
-    const index = stats.joins?.indexOf(member.id) ?? -1;
-
-    if (index !== -1) {
-      stats.joins.splice(index, 1);
-      stats.invites = Math.max(0, stats.invites - 1);
-      changed = true;
-    }
-  }
-
-  if (changed) saveDatabase();
-});
-
-// =====================================================
-// GIVEAWAYS
-// =====================================================
-
-function giveawayEmbed() {
-  const competition = database.competition;
-
-  if (!competition) {
-    return baseEmbed(
-      "🎁 RYVORA • INVITE GIVEAWAY",
-      "There is no active competition."
-    );
-  }
-
-  const top = getLeaderboard().slice(0, 3);
-
-  const ranking = top.length
-    ? top.map((item, index) =>
-      `${["🥇", "🥈", "🥉"][index]} <@${item.id}> — **${item.invites}** invites`
-    ).join("\n")
-    : "No valid invites yet.";
-
-  return baseEmbed(
-    "🎉 RYVORA • INVITE COMPETITION",
-    "## INVITE FRIENDS & WIN!\n\n" +
-    "Invite the most valid members and win a prize!\n\n" +
-    `🏆 **PRIZE**\n${competition.prize}\n\n` +
-    `⏰ **ENDS**\n<t:${Math.floor(competition.endsAt / 1000)}:R>\n\n` +
-    `📊 **LIVE LEADERBOARD**\n${ranking}\n\n` +
-    "━━━━━━━━━━━━━━━━━━━━\n" +
-    "📌 **RULES**\n" +
-    "• Only valid invites count.\n" +
-    "• Bot accounts do not count.\n" +
-    "• Accounts must be at least 7 days old.\n" +
-    "• Members must remain in the server.\n" +
-    "• Fake invites are disqualified.\n" +
-    "• Unverifiable invites are not credited.\n\n" +
-    "💜 Good luck! — RYVORA"
-  );
+  if (!channel) return false;
+  const e = embed('💜 RYVORA • WELCOME',
+    `Welcome ${member}!\n\n🔐 Verify your account\n🎫 Open a support ticket\n` +
+    `🛒 Explore products\n🎉 Join giveaways\n\n👥 **Member #${member.guild.memberCount}**`)
+    .setThumbnail(member.user.displayAvatarURL({ size: 256 }));
+  await channel.send({ content: `💜 Welcome ${member}!`, embeds: [e],
+    files: imageFor(e, 'WELCOME', IMAGES.welcome),
+    allowedMentions: { users: [member.id], parse: [] } });
+  return true;
 }
 
 function leaderboardEmbed() {
-  const leaderboard = getLeaderboard().slice(0, 10);
-
-  return baseEmbed(
-    "🏆 RYVORA • INVITE LEADERBOARD",
-    leaderboard.length
-      ? leaderboard.map((item, index) =>
-        `**#${index + 1}** <@${item.id}> — **${item.invites}** invites`
-      ).join("\n")
-      : "No valid invites recorded yet."
-  );
+  const r = ranking().slice(0, 10);
+  return embed('🏆 RYVORA • INVITE LEADERBOARD',
+    r.length ? r.map((x, n) => `**#${n + 1}** <@${x.id}> — **${x.count}** verified invites`).join('\n')
+      : 'No verified invites yet.');
 }
-
-async function startCompetition(interaction) {
-  await interaction.deferReply({
-    flags: MessageFlags.Ephemeral
-  });
-
-  if (database.competition?.active) {
-    return interaction.editReply(
-      "❌ A competition is already active. End it first."
-    );
-  }
-
-  const days = interaction.options.getInteger("days");
-  const prize = interaction.options.getString("prize");
-  const channel = interaction.options.getChannel("channel") ||
-    interaction.channel;
-
-  const snapshot = await fetchInviteSnapshot(interaction.guild)
-    .catch(() => null);
-
-  if (!snapshot) {
-    return interaction.editReply(
-      "❌ Bot requires Manage Server to track invites."
-    );
-  }
-
-  inviteCache.set(interaction.guild.id, snapshot);
-
-  database.members = {};
-  database.unknownJoins = 0;
-
-  database.competition = {
-    active: true,
-    prize,
-    startsAt: Date.now(),
-    endsAt: Date.now() + days * DAY,
-    channelId: channel.id,
-    messageId: null
-  };
-
-  saveDatabase();
-
-  const embed = giveawayEmbed();
-  const files = attachImage(embed, "GIVEAWAY", IMAGES.giveaway);
-
-  const message = await channel.send({
-    embeds: [embed],
-    files,
-    allowedMentions: { parse: [] }
-  });
-
-  database.competition.messageId = message.id;
-  saveDatabase();
-
-  await interaction.editReply(
-    `✅ Competition started in ${channel}!`
-  );
+function giveawayEmbed() {
+  const c = db.competition;
+  if (!c) return embed('🎁 RYVORA • GIVEAWAY', 'No competition has been created.');
+  const top = ranking().slice(0, 3);
+  const status = active() ? `⏰ **Ends:** <t:${Math.floor(c.endsAt / 1000)}:R>` : '🔒 **Competition ended**';
+  return embed('🎉 RYVORA • INVITE COMPETITION',
+    `## INVITE FRIENDS & WIN!\n\n🏆 **Prize:** ${c.prize}\n${status}\n\n` +
+    '📊 **Leaderboard**\n' + (top.length ? top.map((x, n) =>
+      `${['🥇', '🥈', '🥉'][n]} <@${x.id}> — **${x.count}**`).join('\n') : 'No entries yet.') +
+    '\n\n**Rules:** Real users only, accounts 7+ days old, must verify and stay in server. ' +
+    'Unverifiable joins are not counted.');
 }
-
-async function showInvites(interaction) {
-  const user = interaction.options.getUser("user") ||
-    interaction.user;
-
-  const stats = database.members[user.id];
-
-  return privateReply(interaction, {
-    embeds: [
-      baseEmbed(
-        "📨 RYVORA • INVITE STATISTICS",
-        `👤 **Member:** ${user}\n\n` +
-        `🏆 **Valid Invites:** ${stats?.invites || 0}\n\n` +
-        "Only valid competition invites are counted."
-      )
-    ]
-  });
+async function startGiveaway(i) {
+  await defer(i);
+  if (!admin(i)) return respond(i, '❌ Administrator only.');
+  if (db.competition?.active) return respond(i, '❌ End the current competition first.');
+  const channel = i.options.getChannel('channel') || await getTextChannel(i.guild, C.giveaway) || i.channel;
+  if (!channel || typeof channel.send !== 'function') return respond(i, '❌ Select a text channel.');
+  let snap;
+  try { snap = await snapshot(i.guild); }
+  catch { return respond(i, '❌ Bot requires Manage Server to access invites.'); }
+  const days = i.options.getInteger('days', true);
+  const prize = i.options.getString('prize', true);
+  const draft = { active: true, prize, startsAt: Date.now(), endsAt: Date.now() + days * DAY,
+    channelId: channel.id, messageId: null };
+  const e = embed('🎉 RYVORA • INVITE COMPETITION',
+    `**Prize:** ${prize}\n**Ends:** <t:${Math.floor(draft.endsAt / 1000)}:R>\n\n` +
+    'Invites count after verification. Members must stay in the server.');
+  // Post before resetting previous stats, so a failed send cannot destroy data.
+  const msg = await channel.send({ embeds: [e], files: imageFor(e, 'GIVEAWAY', IMAGES.giveaway),
+    allowedMentions: { parse: [] } });
+  inviteCache.set(i.guildId, snap);
+  db.competition = { ...draft, messageId: msg.id };
+  db.members = {}; db.pending = {}; db.known = {}; db.unknownJoins = 0;
+  saveDb();
+  await respond(i, `✅ Competition started in ${channel}.`);
 }
-
-async function endCompetition(guild, automatic = false) {
-  const competition = database.competition;
-
-  if (!competition?.active) return false;
-
-  competition.active = false;
-  saveDatabase();
-
-  const leaderboard = getLeaderboard();
-
-  let description = "No valid entries. No winner selected.";
-
-  if (leaderboard.length) {
-    const score = leaderboard[0].invites;
-    const winners = leaderboard.filter(item =>
-      item.invites === score
-    );
-
-    if (winners.length > 1) {
-      description =
-        "⚠️ **TIE DETECTED**\n\n" +
-        winners.map(item => `<@${item.id}>`).join("\n") +
-        `\n\n**Valid Invites:** ${score}\n` +
-        "Staff must resolve the tie manually.";
-    } else {
-      description =
-        `🎉 **WINNER:** <@${winners[0].id}>\n\n` +
-        `🏆 **Valid Invites:** ${score}\n\n` +
-        `🎁 **Prize:** ${competition.prize}\n\n` +
-        "Open a ticket to claim your prize.\n" +
-        "Staff will verify the result before delivery.";
-    }
+async function endGiveaway(guild, automatic = false) {
+  if (!db.competition?.active) return false;
+  db.competition.active = false;
+  saveDb();
+  const r = ranking();
+  let winner = 'No eligible winner.';
+  if (r.length) {
+    const ties = r.filter(x => x.count === r[0].count);
+    winner = ties.length > 1
+      ? `⚠️ Tie between: ${ties.map(x => `<@${x.id}>`).join(', ')}. Staff must decide.`
+      : `🏆 **Winner:** <@${r[0].id}>\n**Verified invites:** ${r[0].count}\n` +
+        `**Prize:** ${db.competition.prize}\nOpen a ticket to claim.`;
   }
-
-  const channel = await guild.channels
-    .fetch(competition.channelId)
-    .catch(() => null);
-
-  if (channel?.isTextBased()) {
-    await channel.send({
-      embeds: [
-        baseEmbed(
-          "🏆 RYVORA • GIVEAWAY ENDED",
-          description
-        )
-      ],
-      allowedMentions: { parse: [] }
-    });
-  }
-
-  log(`Competition ended (${automatic ? "automatic" : "manual"}).`);
+  await logTo(guild, db.competition.channelId, {
+    embeds: [embed('🏆 RYVORA • COMPETITION ENDED', winner)]
+  });
+  log('Competition ended', automatic ? '(automatic)' : '(manual)');
   return true;
 }
-
-async function updateGiveawayMessage(guild) {
-  const competition = database.competition;
-
-  if (!competition?.active || !competition.messageId) return;
-
-  const channel = await guild.channels
-    .fetch(competition.channelId)
-    .catch(() => null);
-
-  if (!channel?.isTextBased()) return;
-
-  const message = await channel.messages
-    .fetch(competition.messageId)
-    .catch(() => null);
-
-  if (!message) return;
-
-  const embed = giveawayEmbed();
-
-  // Existing attachments remain attached to the message.
-  const imageUrl = process.env.IMAGE_GIVEAWAY;
-
-  if (imageUrl && /^https?:\/\//i.test(imageUrl)) {
-    embed.setImage(imageUrl);
-  } else if (message.embeds[0]?.image?.url) {
-    embed.setImage(message.embeds[0].image.url);
-  }
-
-  await message.edit({
-    embeds: [embed],
-    allowedMentions: { parse: [] }
-  });
+async function refreshGiveaway(guild) {
+  const c = db.competition;
+  if (!active() || !c.messageId) return;
+  const channel = await getTextChannel(guild, c.channelId);
+  const msg = await channel?.messages.fetch(c.messageId).catch(() => null);
+  if (!msg) return;
+  const e = giveawayEmbed();
+  if (msg.embeds[0]?.image?.url) e.setImage(msg.embeds[0].image.url);
+  await msg.edit({ embeds: [e], allowedMentions: { parse: [] } });
 }
 
-// =====================================================
-// PRODUCT CARDS
-// =====================================================
-
-function productEmbed(product) {
-  return baseEmbed(
-    `✦ ${product.title}`,
-    `${product.description}\n\n` +
-    "━━━━━━━━━━━━━━━━━━━━\n" +
-    `💳 **PRICING**\n${product.pricing}\n\n` +
-    "━━━━━━━━━━━━━━━━━━━━\n" +
-    "🛒 **READY TO ORDER?**\n" +
-    "Click the Purchase button below to open a private ticket."
-  ).setAuthor({
-    name: "RYVORA • PREMIUM PRODUCT CATALOG",
-    iconURL: client.user.displayAvatarURL()
-  });
+function productCard(p) {
+  const e = embed(`✦ ${p.title}`,
+    `${p.description}\n\n━━━━━━━━━━━━━━━━━━━━\n💳 **PRICING**\n${p.pricing}\n\n` +
+    '🛒 Click **Purchase / Open Ticket** to contact staff.');
+  if (client.user) e.setAuthor({ name: 'RYVORA • PREMIUM PRODUCT CATALOG',
+    iconURL: client.user.displayAvatarURL() });
+  const button = new ButtonBuilder().setCustomId(`ryvora_buy:${p.command}`)
+    .setLabel('Purchase / Open Ticket').setEmoji('🛒').setStyle(ButtonStyle.Primary);
+  return { embeds: [e], files: imageFor(e, `PRODUCT_${p.command.toUpperCase()}`, IMAGES.products[p.command]),
+    components: [new ActionRowBuilder().addComponents(button)] };
 }
-
-async function postProduct(interaction, product) {
-  await interaction.deferReply({
-    flags: MessageFlags.Ephemeral
-  });
-
-  const embed = productEmbed(product);
-
-  const files = attachImage(
-    embed,
-    `PRODUCT_${product.command.toUpperCase()}`,
-    IMAGES.products[product.command]
-  );
-
-  const button = new ButtonBuilder()
-    .setCustomId(`ryvora_buy:${product.command}`)
-    .setLabel("Purchase / Open Ticket")
-    .setEmoji("🛒")
-    .setStyle(ButtonStyle.Primary);
-
-  await interaction.channel.send({
-    embeds: [embed],
-    files,
-    components: [
-      new ActionRowBuilder().addComponents(button)
-    ]
-  });
-
-  await interaction.editReply(
-    `✅ ${product.title} product card posted.`
-  );
+async function postProduct(i, p) {
+  await defer(i);
+  if (!manager(i)) return respond(i, '❌ Manage Server permission required.');
+  await i.channel.send({ ...productCard(p), allowedMentions: { parse: [] } });
+  return respond(i, `✅ ${p.title} product card posted.`);
 }
-
-// =====================================================
-// SLASH COMMANDS
-// =====================================================
-
-const adminPermission = PermissionFlagsBits.Administrator;
-const managePermission = PermissionFlagsBits.ManageGuild;
+function catalogPanel() {
+  const e = embed('🛒 RYVORA • PRODUCT CATALOG',
+    'Explore our product catalog. Select a product to view its details and pricing.');
+  const menu = new StringSelectMenuBuilder().setCustomId('ryvora_catalog')
+    .setPlaceholder('Choose a product').addOptions(PRODUCTS.map(p => ({
+      label: p.title.slice(0, 100), value: p.command, description: 'View product information'
+    })));
+  return { embeds: [e], components: [new ActionRowBuilder().addComponents(menu)] };
+}
 
 const commands = [
-  new SlashCommandBuilder()
-    .setName("setup")
-    .setDescription("Post the Ryvora ticket panel")
-    .setDefaultMemberPermissions(adminPermission),
-
-  new SlashCommandBuilder()
-    .setName("verify")
-    .setDescription("Post the verification panel")
-    .setDefaultMemberPermissions(adminPermission),
-
-  new SlashCommandBuilder()
-    .setName("welcome-test")
-    .setDescription("Test the welcome system")
-    .setDefaultMemberPermissions(adminPermission),
-
-  new SlashCommandBuilder()
-    .setName("invite-start")
-    .setDescription("Start an invite competition")
-    .addIntegerOption(option =>
-      option.setName("days")
-        .setDescription("Competition duration")
-        .setMinValue(1)
-        .setMaxValue(30)
-        .setRequired(true)
-    )
-    .addStringOption(option =>
-      option.setName("prize")
-        .setDescription("Competition prize")
-        .setMaxLength(200)
-        .setRequired(true)
-    )
-    .addChannelOption(option =>
-      option.setName("channel")
-        .setDescription("Announcement channel")
-        .addChannelTypes(ChannelType.GuildText)
-    )
-    .setDefaultMemberPermissions(adminPermission),
-
-  new SlashCommandBuilder()
-    .setName("invite-top")
-    .setDescription("Show the invite leaderboard"),
-
-  new SlashCommandBuilder()
-    .setName("invites")
-    .setDescription("Check valid invites")
-    .addUserOption(option =>
-      option.setName("user")
-        .setDescription("Member to check")
-    ),
-
-  new SlashCommandBuilder()
-    .setName("invite-end")
-    .setDescription("End the invite competition")
-    .setDefaultMemberPermissions(adminPermission),
-
-  new SlashCommandBuilder()
-    .setName("ryvora-status")
-    .setDescription("Show Ryvora bot status")
-    .setDefaultMemberPermissions(adminPermission),
-
-  ...PRODUCTS.map(product =>
-    new SlashCommandBuilder()
-      .setName(product.command)
-      .setDescription(`Post the ${product.title} product card`)
-      .setDefaultMemberPermissions(managePermission)
-  )
-].map(command => command.toJSON());
-
+  new SlashCommandBuilder().setName('setup').setDescription('Post the support ticket panel').setDefaultMemberPermissions(P.Administrator),
+  new SlashCommandBuilder().setName('verify').setDescription('Post the verification panel').setDefaultMemberPermissions(P.Administrator),
+  new SlashCommandBuilder().setName('catalog').setDescription('Browse Ryvora products'),
+  new SlashCommandBuilder().setName('welcome-test').setDescription('Test welcome message').setDefaultMemberPermissions(P.Administrator),
+  new SlashCommandBuilder().setName('invite-start').setDescription('Start an invite giveaway')
+    .addIntegerOption(o => o.setName('days').setDescription('Length in days').setMinValue(1).setMaxValue(30).setRequired(true))
+    .addStringOption(o => o.setName('prize').setDescription('Prize').setMaxLength(200).setRequired(true))
+    .addChannelOption(o => o.setName('channel').setDescription('Announcement channel').addChannelTypes(ChannelType.GuildText))
+    .setDefaultMemberPermissions(P.Administrator),
+  new SlashCommandBuilder().setName('invite-top').setDescription('Show verified invite leaderboard'),
+  new SlashCommandBuilder().setName('invites').setDescription('Check verified invite count')
+    .addUserOption(o => o.setName('user').setDescription('Member to inspect')),
+  new SlashCommandBuilder().setName('invite-end').setDescription('End the competition').setDefaultMemberPermissions(P.Administrator),
+  new SlashCommandBuilder().setName('ryvora-status').setDescription('Show bot status').setDefaultMemberPermissions(P.Administrator),
+  new SlashCommandBuilder().setName('ryvora-health').setDescription('Check bot configuration and permissions').setDefaultMemberPermissions(P.Administrator),
+  new SlashCommandBuilder().setName('ticket-add').setDescription('Add a member to this ticket')
+    .addUserOption(o => o.setName('user').setDescription('Member to add').setRequired(true))
+    .setDefaultMemberPermissions(P.ManageChannels),
+  ...PRODUCTS.map(p => new SlashCommandBuilder().setName(p.command)
+    .setDescription(`Post ${p.title} product card`).setDefaultMemberPermissions(P.ManageGuild))
+].map(x => x.toJSON());
 async function registerCommands() {
-  const rest = new REST({ version: "10" })
-    .setToken(CONFIG.token);
-
-  await rest.put(
-    Routes.applicationGuildCommands(
-      CONFIG.clientId,
-      CONFIG.guildId
-    ),
-    { body: commands }
-  );
-
+  const rest = new REST({ version: '10' }).setToken(C.token);
+  await rest.put(Routes.applicationGuildCommands(C.clientId, C.guildId), { body: commands });
   log(`${commands.length} slash commands registered.`);
 }
-
-// =====================================================
-// PANELS
-// =====================================================
-
-async function sendPanel(interaction, type) {
-  await interaction.deferReply({
-    flags: MessageFlags.Ephemeral
-  });
-
-  if (type === "ticket") {
-    const panel = ticketPanel();
-
-    const files = attachImage(
-      panel.embed,
-      "TICKET",
-      IMAGES.ticket
-    );
-
-    await interaction.channel.send({
-      embeds: [panel.embed],
-      components: panel.components,
-      files
-    });
-  } else {
-    const embed = verifyPanel();
-
-    const files = attachImage(
-      embed,
-      "VERIFY",
-      IMAGES.verify
-    );
-
-    const button = new ButtonBuilder()
-      .setCustomId("ryvora_verify")
-      .setLabel("Verify & Unlock")
-      .setEmoji("✅")
-      .setStyle(ButtonStyle.Success);
-
-    await interaction.channel.send({
-      embeds: [embed],
-      files,
-      components: [
-        new ActionRowBuilder().addComponents(button)
-      ]
-    });
-  }
-
-  await interaction.editReply(
-    `✅ ${type} panel posted successfully.`
-  );
+async function health(guild) {
+  const bot = await guild.members.fetchMe();
+  const role = await guild.roles.fetch(C.verified).catch(() => null);
+  const cat = await guild.channels.fetch(C.category).catch(() => null);
+  const checks = [
+    ['Ticket category', cat?.type === ChannelType.GuildCategory],
+    ['Staff role', !!await guild.roles.fetch(C.staff).catch(() => null)],
+    ['Verify role', !!role],
+    ['Manage Channels', bot.permissions.has(P.ManageChannels)],
+    ['Manage Roles', bot.permissions.has(P.ManageRoles)],
+    ['Verify role below bot', !!role && bot.roles.highest.position > role.position],
+    ['Manage Server (invites)', bot.permissions.has(P.ManageGuild)]
+  ];
+  return embed('🩺 RYVORA • HEALTH CHECK', checks.map(([name, ok]) =>
+    `${ok ? '✅' : '❌'} ${name}`).join('\n') +
+    '\n\nℹ️ Enable **Server Members Intent** in Discord Developer Portal for member events.');
 }
 
-// =====================================================
-// INTERACTIONS
-// =====================================================
-
-client.on(Events.InteractionCreate, async interaction => {
+const inProgress = new Set();
+client.on(Events.InteractionCreate, async i => {
+  if (!i.inGuild() || i.guildId !== C.guildId) return;
+  if (inProgress.has(i.id)) return;
+  inProgress.add(i.id);
   try {
-    if (!interaction.guild ||
-        interaction.guild.id !== CONFIG.guildId) return;
-
-    if (interaction.isChatInputCommand()) {
-      const name = interaction.commandName;
-
-      if (name === "setup") {
-        return sendPanel(interaction, "ticket");
+    if (i.isChatInputCommand()) {
+      const n = i.commandName;
+      if (n === 'setup' || n === 'verify') {
+        await defer(i);
+        if (!admin(i)) return respond(i, '❌ Administrator only.');
+        await i.channel.send({ ...(n === 'setup' ? ticketPanel() : verifyPanel()),
+          allowedMentions: { parse: [] } });
+        return respond(i, `✅ ${n === 'setup' ? 'Ticket' : 'Verify'} panel posted.`);
       }
-
-      if (name === "verify") {
-        return sendPanel(interaction, "verify");
+      if (n === 'catalog') return i.reply({ ...catalogPanel(), flags: MessageFlags.Ephemeral });
+      if (n === 'welcome-test') {
+        await defer(i);
+        if (!admin(i)) return respond(i, '❌ Administrator only.');
+        return respond(i, await welcome(await i.guild.members.fetch(i.user.id))
+          ? '✅ Welcome preview posted.' : '❌ Welcome channel not found.');
       }
-
-      if (name === "welcome-test") {
-        await interaction.deferReply({
-          flags: MessageFlags.Ephemeral
-        });
-
-        const member = await interaction.guild.members.fetch(
-          interaction.user.id
-        );
-
-        const sent = await sendWelcome(member);
-
-        return interaction.editReply(
-          sent
-            ? "✅ Welcome preview sent."
-            : "❌ Welcome channel not found."
-        );
+      if (n === 'invite-start') return startGiveaway(i);
+      if (n === 'invite-end') {
+        await defer(i);
+        if (!admin(i)) return respond(i, '❌ Administrator only.');
+        return respond(i, await endGiveaway(i.guild) ? '✅ Giveaway ended.' : '❌ No active giveaway.');
       }
-
-      if (name === "invite-start") {
-        return startCompetition(interaction);
+      if (n === 'invite-top') {
+        const e = leaderboardEmbed();
+        return i.reply({ embeds: [e], files: imageFor(e, 'LEADERBOARD', IMAGES.leaderboard) });
       }
-
-      if (name === "invite-top") {
-        const embed = leaderboardEmbed();
-
-        const files = attachImage(
-          embed,
-          "LEADERBOARD",
-          IMAGES.leaderboard
-        );
-
-        return interaction.reply({
-          embeds: [embed],
-          files
-        });
+      if (n === 'invites') {
+        const u = i.options.getUser('user') || i.user;
+        const count = db.members[u.id]?.joins?.length || 0;
+        return respond(i, { embeds: [embed('📨 RYVORA • INVITES',
+          `**Member:** ${u}\n**Verified invites:** ${count}`)] });
       }
-
-      if (name === "invites") {
-        return showInvites(interaction);
+      if (n === 'ryvora-status') return respond(i, {
+        embeds: [embed('💜 RYVORA • SYSTEM STATUS',
+          `🟢 Connected\n🎫 Tickets: ${Object.keys(state.tickets).length}\n` +
+          `🛒 Products: ${PRODUCTS.length}\n🏆 Giveaway: ${active() ? 'Active' : 'Inactive'}\n` +
+          `📨 Unknown joins: ${db.unknownJoins}\n⏱️ Uptime: ${Math.floor(process.uptime() / 60)} minutes`)]
+      });
+      if (n === 'ryvora-health') {
+        await defer(i);
+        if (!admin(i)) return respond(i, '❌ Administrator only.');
+        return respond(i, { embeds: [await health(i.guild)] });
       }
-
-      if (name === "invite-end") {
-        if (!isAdmin(interaction)) {
-          return privateReply(interaction, "❌ Administrator only.");
-        }
-
-        await interaction.deferReply({
-          flags: MessageFlags.Ephemeral
-        });
-
-        const ended = await endCompetition(interaction.guild);
-
-        return interaction.editReply(
-          ended
-            ? "✅ Competition ended."
-            : "❌ No active competition."
-        );
+      if (n === 'ticket-add') {
+        await defer(i);
+        if (!staff(i) || !activeTicket(i.channel)) return respond(i, '❌ Staff ticket only.');
+        const u = i.options.getUser('user', true);
+        await i.channel.permissionOverwrites.edit(u.id, { ViewChannel: true, SendMessages: true,
+          ReadMessageHistory: true, AttachFiles: true });
+        return respond(i, `✅ Added <@${u.id}> to this ticket.`);
       }
-
-      if (name === "ryvora-status") {
-        return privateReply(interaction, {
-          embeds: [
-            baseEmbed(
-              "💜 RYVORA • SYSTEM STATUS",
-              "🟢 **Discord Connection:** Online\n" +
-              `🎫 **Tracked Tickets:** ${Object.keys(state.tickets).length}\n` +
-              `🛒 **Products:** ${PRODUCTS.length}\n` +
-              `🏆 **Competition:** ${
-                competitionActive() ? "Active" : "Inactive"
-              }\n` +
-              `📨 **Unknown Joins:** ${database.unknownJoins}\n` +
-              `⏱️ **Uptime:** ${Math.floor(process.uptime() / 60)} minutes`
-            )
-          ]
-        });
-      }
-
-      const product = PRODUCTS.find(item =>
-        item.command === name
-      );
-
-      if (product) {
-        return postProduct(interaction, product);
+      if (productByKey.has(n)) return postProduct(i, productByKey.get(n));
+    }
+    if (i.isButton()) {
+      if (i.customId === 'ryvora_verify') return verifyMember(i);
+      if (i.customId === 'ryvora_claim_ticket') return claimTicket(i);
+      if (i.customId === 'ryvora_close_ticket') return closeTicket(i);
+      if (i.customId.startsWith('ryvora_buy:')) {
+        const key = i.customId.slice('ryvora_buy:'.length);
+        if (!productByKey.has(key)) return respond(i, '❌ Product does not exist.');
+        return createTicket(i, 'purchase', key);
       }
     }
-
-    if (interaction.isButton()) {
-      if (interaction.customId === "ryvora_verify") {
-        return verifyMember(interaction);
-      }
-
-      if (interaction.customId === "ryvora_close_ticket") {
-        return closeTicket(interaction);
-      }
-
-      if (interaction.customId === "ryvora_claim_ticket") {
-        return claimTicket(interaction);
-      }
-
-      if (interaction.customId.startsWith("ryvora_buy:")) {
-        const productKey = interaction.customId.split(":")[1];
-
-        if (!PRODUCTS.some(p => p.command === productKey)) {
-          return privateReply(interaction, "❌ Product not found.");
-        }
-
-        return createTicket(
-          interaction,
-          "purchase",
-          productKey
-        );
+    if (i.isStringSelectMenu()) {
+      if (i.customId === 'ryvora_ticket_category') return createTicket(i, i.values[0]);
+      if (i.customId === 'ryvora_catalog') {
+        const p = productByKey.get(i.values[0]);
+        if (!p) return respond(i, '❌ Product not found.');
+        return i.reply({ ...productCard(p), flags: MessageFlags.Ephemeral });
       }
     }
+  } catch (e) {
+    logError(`Interaction ${i.id}:`, e);
+    if ([10062, 40060].includes(e.code)) return;
+    if (!i.isRepliable()) return;
+    try { await respond(i, '❌ A problem occurred. Please contact staff.'); }
+    catch (err) { logError('Could not reply:', err.message); }
+  } finally { inProgress.delete(i.id); }
+});
 
-    if (interaction.isStringSelectMenu()) {
-      if (interaction.customId === "ryvora_ticket_category") {
-        return createTicket(
-          interaction,
-          interaction.values[0]
-        );
-      }
-    }
-
-  } catch (error) {
-    errorLog("Interaction error:", error);
-
-    if (error.code === 10062 || error.code === 40060) {
-      return;
-    }
-
-    if (!interaction.isRepliable()) return;
-
+let interval = null;
+client.once(Events.ClientReady, async () => {
+  log(`Logged in as ${client.user.tag}`);
+  const guild = client.guilds.cache.get(C.guildId) || await client.guilds.fetch(C.guildId).catch(() => null);
+  if (!guild) return logError('Configured server not found.');
+  try { await registerCommands(); } catch (e) { logError('Command registration failed:', e); }
+  await initInvites(guild);
+  const tick = async () => {
     try {
-      await privateReply(
-        interaction,
-        "❌ An unexpected error occurred. Contact staff."
-      );
-    } catch (replyError) {
-      errorLog("Interaction reply failed:", replyError);
-    }
-  }
+      if (!db.competition?.active) return;
+      if (!active()) await endGiveaway(guild, true);
+      else await refreshGiveaway(guild);
+    } catch (e) { logError('Giveaway tick:', e); }
+  };
+  await tick();
+  interval = setInterval(tick, 60000);
+  log(`Ready: ${PRODUCTS.length} products; tickets, verification, invites, giveaways.`);
 });
-
-// =====================================================
-// STARTUP
-// =====================================================
-
-client.once(Events.ClientReady, async readyClient => {
-  log(`Logged in as ${readyClient.user.tag}`);
-
-  const guild = await client.guilds
-    .fetch(CONFIG.guildId)
-    .catch(() => null);
-
-  if (!guild) {
-    errorLog("Configured guild not found.");
-    return;
-  }
-
-  try {
-    await guild.channels.fetch();
-    await guild.roles.fetch();
-
-    await registerCommands();
-    await initializeInvites(guild);
-
-    log(`Server: ${guild.name}`);
-    log(`Products loaded: ${PRODUCTS.length}`);
-    log("Ticket system ready.");
-    log("Verification system ready.");
-    log("Welcome system ready.");
-    log("Invite tracking ready.");
-    log("All Ryvora systems initialized.");
-
-  } catch (error) {
-    errorLog("Startup initialization failed:", error);
-  }
-
-  async function competitionTick() {
-    try {
-      const competition = database.competition;
-
-      if (!competition?.active) return;
-
-      if (Date.now() >= competition.endsAt) {
-        await endCompetition(guild, true);
-      } else {
-        await updateGiveawayMessage(guild);
-      }
-    } catch (error) {
-      errorLog("Competition scheduler failed:", error);
-    }
-  }
-
-  await competitionTick();
-
-  setInterval(competitionTick, 60000);
+client.on(Events.Error, e => logError('Client:', e));
+process.on('unhandledRejection', e => logError('Unhandled rejection:', e));
+process.on('uncaughtException', e => { logError('Fatal error:', e); process.exit(1); });
+for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => {
+  if (interval) clearInterval(interval);
+  client.destroy();
+  process.exit(0);
 });
-
-// =====================================================
-// ERROR HANDLING
-// =====================================================
-
-client.on(Events.Error, error => {
-  errorLog("Discord client error:", error);
-});
-
-process.on("unhandledRejection", error => {
-  errorLog("Unhandled rejection:", error);
-});
-
-process.on("uncaughtException", error => {
-  errorLog("Uncaught exception:", error);
-  process.exitCode = 1;
-});
-
-client.login(CONFIG.token).catch(error => {
-  errorLog("Discord login failed:", error);
-  process.exitCode = 1;
-});
+client.login(C.token).catch(e => { logError('Login failed:', e); process.exit(1); });
