@@ -5,6 +5,7 @@ require('dotenv').config();
 
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 
 const {
   Client,
@@ -24,53 +25,41 @@ const {
   MessageFlags
 } = require('discord.js');
 
-// ============================================================
+// ======================================================
 // RYVORA - ULTIMATE METHODS
-// Discord.js v14
-// ============================================================
+// Unified Discord.js v14 bot
+// ======================================================
 
 const CONFIG = {
   token: process.env.DISCORD_TOKEN,
   clientId: process.env.CLIENT_ID,
   guildId: process.env.GUILD_ID,
-
   ticketCategory: process.env.TICKET_CATEGORY_ID,
   staffRole: process.env.STAFF_ROLE_ID,
   verifyRole: process.env.VERIFY_ROLE_ID,
-
   welcomeChannel: process.env.WELCOME_CHANNEL_ID,
   giveawayChannel: process.env.GIVEAWAY_CHANNEL_ID,
   inviteLogChannel: process.env.INVITE_LOG_CHANNEL_ID,
   ticketLogChannel: process.env.TICKET_LOG_CHANNEL_ID,
   verifyLogChannel: process.env.VERIFY_LOG_CHANNEL_ID,
-
   purple: 0x8B2CFF,
   green: 0x57F287,
   red: 0xED4245
 };
 
 for (const key of [
-  'token',
-  'clientId',
-  'guildId',
-  'ticketCategory',
-  'staffRole',
-  'verifyRole'
+  'token', 'clientId', 'guildId',
+  'ticketCategory', 'staffRole', 'verifyRole'
 ]) {
-  if (!CONFIG[key]) {
-    throw new Error(`Missing configuration: ${key}`);
-  }
+  if (!CONFIG[key]) throw new Error(`Missing configuration: ${key}`);
 }
-
-const ROOT = __dirname;
-const IMAGE_DIR = path.join(ROOT, 'images');
-const DB_FILE = path.join(ROOT, 'ryvora-invites.json');
-const STATE_FILE = path.join(ROOT, 'ryvora-state.json');
-
-const DAY = 86400000;
 
 const log = (...args) => console.log('[RYVORA]', ...args);
 const logError = (...args) => console.error('[RYVORA]', ...args);
+
+const ROOT = __dirname;
+const IMAGE_DIR = path.join(ROOT, 'images');
+const DAY = 86400000;
 
 const client = new Client({
   intents: [
@@ -79,9 +68,112 @@ const client = new Client({
   ]
 });
 
-// ============================================================
+// ======================================================
+// SAFE STORAGE
+// ======================================================
+
+function writableDirectory() {
+  const configured = process.env.RYVORA_DATA_DIR?.trim();
+  const candidates = configured
+    ? [configured]
+    : [
+        path.join(ROOT, 'data'),
+        path.join(os.tmpdir(), 'ryvora')
+      ];
+
+  for (const dir of candidates) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+
+      const probe = path.join(dir, `.probe-${process.pid}`);
+      fs.writeFileSync(probe, 'ok', { flag: 'wx' });
+      fs.unlinkSync(probe);
+
+      log('Writable storage:', dir);
+
+      if (dir.startsWith(os.tmpdir())) {
+        logError('Temporary storage in use. Configure a Railway Volume for persistence.');
+      }
+
+      return dir;
+    } catch (error) {
+      logError('Storage unavailable:', dir, error.message);
+    }
+  }
+
+  throw new Error('No writable data directory available');
+}
+
+const DATA_DIR = writableDirectory();
+const DB_FILE = path.join(DATA_DIR, 'ryvora-invites.json');
+const STATE_FILE = path.join(DATA_DIR, 'ryvora-state.json');
+
+function readJson(filename, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(filename, 'utf8'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      logError('Storage read failed:', filename, error.message);
+    }
+    return fallback;
+  }
+}
+
+function writeJson(filename, value) {
+  const temp = `${filename}.${process.pid}.tmp`;
+
+  try {
+    fs.mkdirSync(path.dirname(filename), { recursive: true });
+    fs.writeFileSync(
+      temp,
+      JSON.stringify(value, null, 2),
+      { encoding: 'utf8', mode: 0o600 }
+    );
+    fs.renameSync(temp, filename);
+  } catch (error) {
+    try {
+      if (fs.existsSync(temp)) fs.unlinkSync(temp);
+    } catch {}
+    logError('Storage write failed:', filename, error.message);
+    throw error;
+  }
+}
+
+const db = {
+  competition: null,
+  members: {},
+  pending: {},
+  known: {},
+  unknownJoins: 0,
+  ...readJson(DB_FILE, {})
+};
+
+const state = {
+  tickets: {},
+  ...readJson(STATE_FILE, {})
+};
+
+db.members ||= {};
+db.pending ||= {};
+db.known ||= {};
+state.tickets ||= {};
+
+const saveDb = () => writeJson(DB_FILE, db);
+const saveState = () => writeJson(STATE_FILE, state);
+
+function safeSave(fn, label) {
+  try {
+    fn();
+    return true;
+  } catch (error) {
+    logError(`${label} persistence failed:`, error.message);
+    return false;
+  }
+}
+
+// ======================================================
 // IMAGES
-// ============================================================
+// ======================================================
 
 const IMAGES = {
   ticket: 'ticket.png',
@@ -90,13 +182,11 @@ const IMAGES = {
   giveaway: 'giveaway.png',
   leaderboard: 'leaderboard.png',
   inviteLog: 'invite-log.png',
-
   ticketPurchase: 'ticket-purchase.png',
   ticketPreSale: 'ticket-pre-sale.png',
   ticketSupport: 'ticket-support.png',
   ticketHwid: 'ticket-hwid.png',
   ticketMedia: 'ticket-media.png',
-
   products: {
     perm_croofer: 'perm-croofer.png',
     val_showcase: 'val-showcase.png',
@@ -116,7 +206,7 @@ const IMAGES = {
   }
 };
 
-function allImageEntries() {
+function allImages() {
   return [
     ...Object.entries(IMAGES)
       .filter(([key]) => key !== 'products')
@@ -124,80 +214,63 @@ function allImageEntries() {
         key: key.replace(/([A-Z])/g, '_$1').toUpperCase(),
         filename
       })),
-    ...Object.entries(IMAGES.products).map(([key, filename]) => ({
-      key: `PRODUCT_${key.toUpperCase()}`,
-      filename
-    }))
+    ...Object.entries(IMAGES.products)
+      .map(([key, filename]) => ({
+        key: `PRODUCT_${key.toUpperCase()}`,
+        filename
+      }))
   ];
 }
 
-function imageFor(embed, key, filename) {
-  // Local files have priority over expired Discord CDN URLs.
-  if (filename && filename === path.basename(filename)) {
-    const full = path.join(IMAGE_DIR, filename);
+function validImage(filename) {
+  if (!filename || path.basename(filename) !== filename) return false;
 
-    try {
-      if (fs.existsSync(full) && fs.statSync(full).isFile()) {
-        const size = fs.statSync(full).size;
+  try {
+    const stat = fs.statSync(path.join(IMAGE_DIR, filename));
+    return stat.isFile() && stat.size > 0 && stat.size <= 8 * 1024 * 1024;
+  } catch {
+    return false;
+  }
+}
 
-        if (size > 0 && size <= 8 * 1024 * 1024) {
-          embed.setImage(`attachment://${filename}`);
-          log(`IMAGE OK: ${filename}`);
+function imageFor(embed, key, filename, fallback = null) {
+  const chosen = validImage(filename)
+    ? filename
+    : validImage(fallback)
+      ? fallback
+      : null;
 
-          return [
-            new AttachmentBuilder(full, { name: filename })
-          ];
-        }
-
-        logError(`IMAGE INVALID SIZE: ${filename}`);
-      }
-    } catch (error) {
-      logError(`IMAGE ERROR ${filename}:`, error.message);
-    }
+  if (chosen) {
+    embed.setImage(`attachment://${chosen}`);
+    return [
+      new AttachmentBuilder(path.join(IMAGE_DIR, chosen), {
+        name: chosen
+      })
+    ];
   }
 
-  const url = (
-    process.env[`IMAGE_${key.toUpperCase()}`] || ''
-  ).trim();
+  const url = process.env[`IMAGE_${key.toUpperCase()}`]?.trim();
 
-  if (/^https:\/\//i.test(url)) {
+  if (url && /^https:\/\//i.test(url)) {
     embed.setImage(url);
-    log(`IMAGE URL FALLBACK: ${key}`);
     return [];
   }
 
-  log(`IMAGE MISSING: ${filename || key}`);
+  log('Image missing:', filename);
   return [];
 }
 
 function imageHealth() {
-  const entries = allImageEntries();
-
-  return entries.map(({ key, filename }) => {
-    const full = path.join(IMAGE_DIR, filename);
-
-    let exists = false;
-    try {
-      exists = fs.existsSync(full) &&
-        fs.statSync(full).isFile() &&
-        fs.statSync(full).size > 0;
-    } catch {}
-
-    const fallback = Boolean(
-      process.env[`IMAGE_${key}`]?.trim()
-    );
-
-    return {
-      filename,
-      exists,
-      fallback
-    };
-  });
+  return allImages().map(item => ({
+    ...item,
+    exists: validImage(item.filename),
+    fallback: Boolean(process.env[`IMAGE_${item.key}`]?.trim())
+  }));
 }
 
-// ============================================================
-// PRODUCTS
-// ============================================================
+// ======================================================
+// PRODUCT CATALOG - 15 PRODUCTS
+// ======================================================
 
 const PRODUCTS = [
   {
@@ -265,36 +338,20 @@ const PRODUCTS = [
   {
     command: 'nvidia_bypass',
     title: 'NVIDIA Bypass',
-    description:
-      'NVIDIA Bypass product information.\n\n' +
-      'Intended for compatible NVIDIA recording configurations. ' +
-      'Contact staff to confirm compatibility.',
+    description: 'NVIDIA Bypass product information.\n\nContact staff to confirm compatibility.',
     pricing: '• NVIDIA Bypass → **$10**\n• NVIDIA Bypass + Mouse → **$15**'
   },
   {
     command: 'custom_cleaners',
     title: 'Custom Cleaners',
-    description:
-      '🧹 **Custom Cleaner Service**\n\n' +
-      'Available products:\n' +
-      '• TZX\n• GOSTH\n• TESTO\n• SKRIPTGG\n\n' +
-      'Contact staff for compatibility and service details.',
+    description: '🧹 **Custom Cleaner Service**\n\nAvailable products:\n• TZX\n• GOSTH\n• TESTO\n• SKRIPTGG\n\nContact staff for details.',
     pricing: '• Price per cleaner → **$35**'
   },
   {
     command: 'tweaks',
     title: 'PC Optimization',
-    description:
-      '🚀 **Complete PC Optimization**\n\n' +
-      '• BIOS Tuner\n' +
-      '• Network Adapter Tuner\n' +
-      '• Hardware Optimization\n' +
-      '• Priority Customer Support\n' +
-      '• 20+ Advanced Features\n\n' +
-      'Results depend on hardware and configuration.',
-    pricing:
-      '• PC Optimization → **$30**\n' +
-      '• Re-Optimization → **$15**'
+    description: '🚀 **Complete PC Optimization**\n\n• BIOS Tuner\n• Network Adapter Tuner\n• Hardware Optimization\n• Priority Customer Support\n• 20+ Advanced Features\n\nResults depend on hardware and configuration.',
+    pricing: '• PC Optimization → **$30**\n• Re-Optimization → **$15**'
   },
   {
     command: 'fortnite_accounts',
@@ -323,9 +380,7 @@ const PRODUCTS = [
     command: 'fortnite_vbucks',
     title: 'Fortnite V-Bucks',
     description: 'Fortnite V-Bucks packages for PC Epic accounts.',
-    pricing:
-      '• 4,500 V-Bucks → **$40**\n' +
-      '• 12,500 V-Bucks → **$80**'
+    pricing: '• 4,500 V-Bucks → **$40**\n• 12,500 V-Bucks → **$80**'
   }
 ];
 
@@ -366,69 +421,21 @@ const CATEGORIES = {
   }
 };
 
-// ============================================================
-// STORAGE
-// ============================================================
-
-function readJson(filename, fallback) {
-  try {
-    return JSON.parse(fs.readFileSync(filename, 'utf8'));
-  } catch (error) {
-    if (error.code !== 'ENOENT') {
-      logError(`Storage read error ${filename}:`, error.message);
-    }
-    return fallback;
-  }
-}
-
-function writeJson(filename, value) {
-  const temp = `${filename}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify(value, null, 2));
-  fs.renameSync(temp, filename);
-}
-
-const db = {
-  competition: null,
-  members: {},
-  pending: {},
-  known: {},
-  unknownJoins: 0,
-  ...readJson(DB_FILE, {})
-};
-
-const state = {
-  tickets: {},
-  ...readJson(STATE_FILE, {})
-};
-
-db.members ||= {};
-db.pending ||= {};
-db.known ||= {};
-state.tickets ||= {};
-
-const saveDb = () => writeJson(DB_FILE, db);
-const saveState = () => writeJson(STATE_FILE, state);
-
-// ============================================================
+// ======================================================
 // HELPERS
-// ============================================================
+// ======================================================
 
-function makeEmbed(title, description, color = CONFIG.purple) {
+function embed(title, description, color = CONFIG.purple) {
   return new EmbedBuilder()
     .setColor(color)
     .setTitle(title)
     .setDescription(description)
-    .setFooter({ text: 'Ryvora - Ultimate Methods' })
+    .setFooter({ text: 'RYVORA • ULTIMATE METHODS' })
     .setTimestamp();
 }
 
-function isAdmin(i) {
-  return Boolean(i.memberPermissions?.has(P.Administrator));
-}
-
-function isManager(i) {
-  return Boolean(i.memberPermissions?.has(P.ManageGuild));
-}
+const isAdmin = i => Boolean(i.memberPermissions?.has(P.Administrator));
+const isManager = i => Boolean(i.memberPermissions?.has(P.ManageGuild));
 
 function isStaff(i) {
   return isAdmin(i) ||
@@ -443,14 +450,10 @@ async function defer(i) {
     await i.deferReply({ flags: MessageFlags.Ephemeral });
     return true;
   } catch (error) {
-    if (error.code === 40060 || error.code === 10062) {
-      logError(
-        `Interaction acknowledgement conflict: ${i.id}. ` +
-        'Check for another running bot instance.'
-      );
+    if ([10062, 40060].includes(error.code)) {
+      logError('Interaction conflict:', i.id);
       return false;
     }
-
     throw error;
   }
 }
@@ -460,9 +463,7 @@ async function respond(i, payload) {
     ? { content: payload }
     : payload;
 
-  if (i.deferred) {
-    return i.editReply(data);
-  }
+  if (i.deferred) return i.editReply(data);
 
   if (i.replied) {
     return i.followUp({
@@ -477,7 +478,7 @@ async function respond(i, payload) {
   });
 }
 
-async function getTextChannel(guild, id) {
+async function getChannel(guild, id) {
   if (!id) return null;
 
   const channel = await guild.channels.fetch(id).catch(() => null);
@@ -489,8 +490,7 @@ async function getTextChannel(guild, id) {
 }
 
 async function logTo(guild, channelId, payload) {
-  const channel = await getTextChannel(guild, channelId);
-
+  const channel = await getChannel(guild, channelId);
   if (!channel) return false;
 
   try {
@@ -500,17 +500,17 @@ async function logTo(guild, channelId, payload) {
     });
     return true;
   } catch (error) {
-    logError('Log channel error:', error.message);
+    logError('Log delivery failed:', error.message);
     return false;
   }
 }
 
-// ============================================================
+// ======================================================
 // PANELS
-// ============================================================
+// ======================================================
 
 function ticketPanel() {
-  const e = makeEmbed(
+  const e = embed(
     '🎫 RYVORA • SUPPORT CENTER',
     '## PREMIUM SUPPORT\n\n' +
     '🛒 **Purchase** — Place an order\n' +
@@ -536,17 +536,14 @@ function ticketPanel() {
   return {
     embeds: [e],
     files: imageFor(e, 'TICKET', IMAGES.ticket),
-    components: [
-      new ActionRowBuilder().addComponents(menu)
-    ]
+    components: [new ActionRowBuilder().addComponents(menu)]
   };
 }
 
 function verifyPanel() {
-  const e = makeEmbed(
+  const e = embed(
     '🔐 RYVORA • OFFICIAL VERIFICATION',
     '## Welcome to Ryvora!\n\n' +
-    'Before accessing the community, complete verification.\n\n' +
     '✦ **Step 1** — Read the server rules.\n' +
     '✦ **Step 2** — Click Verify & Unlock.\n' +
     '✦ **Step 3** — Receive your member role.\n\n' +
@@ -562,14 +559,12 @@ function verifyPanel() {
   return {
     embeds: [e],
     files: imageFor(e, 'VERIFY', IMAGES.verify),
-    components: [
-      new ActionRowBuilder().addComponents(button)
-    ]
+    components: [new ActionRowBuilder().addComponents(button)]
   };
 }
 
 function productCard(product) {
-  const e = makeEmbed(
+  const e = embed(
     `✦ ${product.title}`,
     `${product.description}\n\n` +
     '━━━━━━━━━━━━━━━━━━━━\n' +
@@ -597,17 +592,15 @@ function productCard(product) {
       `PRODUCT_${product.command.toUpperCase()}`,
       IMAGES.products[product.command]
     ),
-    components: [
-      new ActionRowBuilder().addComponents(button)
-    ]
+    components: [new ActionRowBuilder().addComponents(button)]
   };
 }
 
 function catalogPanel() {
-  const e = makeEmbed(
+  const e = embed(
     '🛒 RYVORA • PRODUCT CATALOG',
     'Browse our premium product catalog.\n\n' +
-    'Choose a product below to view its information and pricing.'
+    'Choose a product below to view pricing and information.'
   );
 
   const menu = new StringSelectMenuBuilder()
@@ -623,15 +616,13 @@ function catalogPanel() {
 
   return {
     embeds: [e],
-    components: [
-      new ActionRowBuilder().addComponents(menu)
-    ]
+    components: [new ActionRowBuilder().addComponents(menu)]
   };
 }
 
-// ============================================================
+// ======================================================
 // TICKETS
-// ============================================================
+// ======================================================
 
 const ticketLocks = new Set();
 
@@ -683,6 +674,7 @@ async function createTicket(i, categoryKey, productKey = null) {
   ticketLocks.add(lock);
 
   let created = null;
+  let announced = false;
 
   try {
     const guild = i.guild;
@@ -692,13 +684,13 @@ async function createTicket(i, categoryKey, productKey = null) {
       .catch(() => null);
 
     if (parent?.type !== ChannelType.GuildCategory) {
-      return respond(i, '❌ Ticket category is not configured correctly.');
+      return respond(i, '❌ Ticket category is configured incorrectly.');
     }
 
     const bot = await guild.members.fetchMe();
 
     if (!bot.permissions.has(P.ManageChannels)) {
-      return respond(i, '❌ Bot needs Manage Channels permission.');
+      return respond(i, '❌ Bot requires Manage Channels.');
     }
 
     const staffRole = await guild.roles
@@ -706,7 +698,7 @@ async function createTicket(i, categoryKey, productKey = null) {
       .catch(() => null);
 
     if (!staffRole) {
-      return respond(i, '❌ Staff role not found.');
+      return respond(i, '❌ Staff role was not found.');
     }
 
     await guild.channels.fetch();
@@ -761,30 +753,11 @@ async function createTicket(i, categoryKey, productKey = null) {
             P.SendMessages,
             P.ReadMessageHistory,
             P.ManageChannels,
-            P.AttachFiles
+            P.AttachFiles,
+            P.EmbedLinks
           ]
         }
       ]
-    });
-
-    const e = makeEmbed(
-      `${category.emoji} RYVORA • ${category.name}`,
-      `Welcome <@${i.user.id}>!\n\n` +
-      `**Category:** ${category.name}\n` +
-      (product ? `**Product:** ${product.title}\n` : '') +
-      '\nPlease describe your request clearly.\n\n' +
-      '💜 Our support team will assist you.'
-    );
-
-    await created.send({
-      content: `<@${i.user.id}> <@&${CONFIG.staffRole}>`,
-      embeds: [e],
-      files: imageFor(e, category.imageKey, category.image),
-      components: ticketButtons(),
-      allowedMentions: {
-        users: [i.user.id],
-        roles: [CONFIG.staffRole]
-      }
     });
 
     state.tickets[created.id] = {
@@ -795,13 +768,59 @@ async function createTicket(i, categoryKey, productKey = null) {
       createdAt: Date.now()
     };
 
-    saveState();
+    // Storage failures must not destroy a successfully created channel.
+    safeSave(saveState, 'Ticket');
+
+    const e = embed(
+      `${category.emoji} RYVORA • ${category.name}`,
+      `Welcome <@${i.user.id}>!\n\n` +
+      `**Category:** ${category.name}\n` +
+      (product ? `**Product:** ${product.title}\n` : '') +
+      '\nPlease describe your request clearly.\n\n' +
+      '💜 Our support team will assist you.'
+    );
+
+    const files = imageFor(
+      e,
+      category.imageKey,
+      category.image,
+      IMAGES.ticket
+    );
+
+    try {
+      await created.send({
+        content: `<@${i.user.id}> <@&${CONFIG.staffRole}>`,
+        embeds: [e],
+        files,
+        components: ticketButtons(),
+        allowedMentions: {
+          users: [i.user.id],
+          roles: [CONFIG.staffRole]
+        }
+      });
+    } catch (error) {
+      logError('Ticket welcome message failed:', error.message);
+
+      // Try again without attachments.
+      e.setImage(null);
+
+      try {
+        await created.send({
+          embeds: [e],
+          components: ticketButtons(),
+          allowedMentions: { parse: [] }
+        });
+      } catch (retryError) {
+        logError('Ticket fallback message failed:', retryError.message);
+      }
+    }
 
     await respond(i, `✅ Your ticket is ready: ${created}`);
+    announced = true;
 
     await logTo(guild, CONFIG.ticketLogChannel, {
       embeds: [
-        makeEmbed(
+        embed(
           '🎫 TICKET CREATED',
           `**Owner:** <@${i.user.id}>\n` +
           `**Category:** ${category.name}\n` +
@@ -810,13 +829,19 @@ async function createTicket(i, categoryKey, productKey = null) {
       ]
     });
   } catch (error) {
-    if (created) {
-      await created.delete('Ticket setup failed').catch(() => {});
-      delete state.tickets[created.id];
-      saveState();
-    }
+    logError('Ticket creation failed:', error.stack || error.message);
 
-    throw error;
+    if (created && !announced) {
+      await respond(
+        i,
+        `⚠️ Your ticket channel was created, but setup was incomplete: ${created}`
+      ).catch(() => {});
+    } else if (!created) {
+      await respond(
+        i,
+        '❌ Could not create the ticket. Please contact staff.'
+      ).catch(() => {});
+    }
   } finally {
     ticketLocks.delete(lock);
   }
@@ -825,13 +850,8 @@ async function createTicket(i, categoryKey, productKey = null) {
 async function claimTicket(i) {
   if (!await defer(i)) return;
 
-  if (!isStaff(i)) {
-    return respond(i, '❌ Staff only.');
-  }
-
-  if (!isTicket(i.channel)) {
-    return respond(i, '❌ This is not a ticket.');
-  }
+  if (!isStaff(i)) return respond(i, '❌ Staff only.');
+  if (!isTicket(i.channel)) return respond(i, '❌ Not a ticket.');
 
   const ticket = state.tickets[i.channelId] ||= {
     ownerId: ownerFrom(i.channel),
@@ -841,14 +861,11 @@ async function claimTicket(i) {
   };
 
   if (ticket.claimedBy) {
-    return respond(
-      i,
-      `⚠️ Already claimed by <@${ticket.claimedBy}>.`
-    );
+    return respond(i, `⚠️ Already claimed by <@${ticket.claimedBy}>.`);
   }
 
   ticket.claimedBy = i.user.id;
-  saveState();
+  safeSave(saveState, 'Ticket claim');
 
   await i.message.edit({
     components: ticketButtons(true)
@@ -856,10 +873,7 @@ async function claimTicket(i) {
 
   await i.channel.send({
     embeds: [
-      makeEmbed(
-        '💜 STAFF ASSIGNED',
-        `<@${i.user.id}> has claimed this ticket.`
-      )
+      embed('💜 STAFF ASSIGNED', `<@${i.user.id}> has claimed this ticket.`)
     ],
     allowedMentions: { parse: [] }
   });
@@ -885,9 +899,7 @@ async function createTranscript(channel) {
     if (batch.size < 100) break;
   }
 
-  messages.sort(
-    (a, b) => a.createdTimestamp - b.createdTimestamp
-  );
+  messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 
   const lines = [
     'RYVORA TICKET TRANSCRIPT',
@@ -952,23 +964,21 @@ async function closeTicket(i) {
     try {
       transcript = await createTranscript(i.channel);
     } catch (error) {
-      logError('Transcript error:', error.message);
+      logError('Transcript failed:', error.message);
     }
 
     const ticket = state.tickets[i.channelId];
 
     await logTo(i.guild, CONFIG.ticketLogChannel, {
       embeds: [
-        makeEmbed(
+        embed(
           '🔒 TICKET CLOSED',
           `**Channel:** ${i.channel.name}\n` +
           `**Owner:** <@${ownerId}>\n` +
           `**Closed by:** <@${i.user.id}>\n` +
           `**Category:** ${ticket?.category || 'Unknown'}\n` +
           `**Claimed by:** ${
-            ticket?.claimedBy
-              ? `<@${ticket.claimedBy}>`
-              : 'None'
+            ticket?.claimedBy ? `<@${ticket.claimedBy}>` : 'None'
           }`
         )
       ],
@@ -978,15 +988,15 @@ async function closeTicket(i) {
     await i.channel.delete(`Closed by ${i.user.id}`);
 
     delete state.tickets[i.channelId];
-    saveState();
+    safeSave(saveState, 'Ticket closure');
   } finally {
     ticketLocks.delete(i.channelId);
   }
 }
 
-// ============================================================
-// INVITES
-// ============================================================
+// ======================================================
+// INVITE TRACKING
+// ======================================================
 
 const inviteCache = new Map();
 let inviteQueue = Promise.resolve();
@@ -995,7 +1005,7 @@ function queueInvite(operation) {
   const result = inviteQueue.then(operation);
 
   inviteQueue = result.catch(error => {
-    logError('Invite queue:', error.message);
+    logError('Invite queue error:', error.message);
   });
 
   return result;
@@ -1038,11 +1048,7 @@ function ranking() {
       count: data.joins?.length || 0
     }))
     .filter(item => item.count > 0)
-    .sort(
-      (a, b) =>
-        b.count - a.count ||
-        a.id.localeCompare(b.id)
-    );
+    .sort((a, b) => b.count - a.count || a.id.localeCompare(b.id));
 }
 
 function previouslyCounted(id) {
@@ -1059,7 +1065,7 @@ async function trackJoin(member) {
   try {
     current = await snapshotInvites(member.guild);
   } catch (error) {
-    logError('Invite fetch:', error.message);
+    logError('Invite fetch failed:', error.message);
     return { status: 'unknown', inviter: null };
   }
 
@@ -1071,11 +1077,7 @@ async function trackJoin(member) {
     for (const [code, invite] of current) {
       const old = previous.get(code);
 
-      if (
-        old &&
-        invite.uses > old.uses &&
-        invite.inviter
-      ) {
+      if (old && invite.uses > old.uses && invite.inviter) {
         matches.push({
           inviter: invite.inviter,
           difference: invite.uses - old.uses
@@ -1084,8 +1086,7 @@ async function trackJoin(member) {
     }
   }
 
-  const inviter =
-    matches.length === 1 &&
+  const inviter = matches.length === 1 &&
     matches[0].difference === 1
       ? matches[0].inviter
       : null;
@@ -1112,7 +1113,7 @@ async function trackJoin(member) {
     db.unknownJoins++;
   }
 
-  saveDb();
+  safeSave(saveDb, 'Invite join');
 
   return { status, inviter };
 }
@@ -1120,7 +1121,6 @@ async function trackJoin(member) {
 async function creditVerifiedInvite(member) {
   return queueInvite(async () => {
     const pending = db.pending[member.id];
-
     if (!pending) return false;
 
     delete db.pending[member.id];
@@ -1130,14 +1130,14 @@ async function creditVerifiedInvite(member) {
       pending.at < db.competition.startsAt ||
       previouslyCounted(member.id)
     ) {
-      saveDb();
+      safeSave(saveDb, 'Invite verification');
       return false;
     }
 
     const inviter = pending.inviter;
 
     if (!inviter || inviter === member.id) {
-      saveDb();
+      safeSave(saveDb, 'Invite verification');
       return false;
     }
 
@@ -1151,11 +1151,11 @@ async function creditVerifiedInvite(member) {
     stats.invites = stats.joins.length;
 
     db.known[member.id] = true;
-    saveDb();
+    safeSave(saveDb, 'Invite credit');
 
     await logTo(member.guild, CONFIG.inviteLogChannel, {
       embeds: [
-        makeEmbed(
+        embed(
           '✅ VERIFIED INVITE',
           `**Member:** <@${member.id}>\n` +
           `**Inviter:** <@${inviter}>\n` +
@@ -1180,7 +1180,7 @@ async function postInviteLog(member, info) {
     unknown: '⚠️ Invite could not be identified'
   };
 
-  const e = makeEmbed(
+  const e = embed(
     '📨 RYVORA • INVITE LOG',
     `**Joined:** <@${member.id}>\n` +
     `**Inviter:** ${
@@ -1195,9 +1195,9 @@ async function postInviteLog(member, info) {
   });
 }
 
-// ============================================================
-// VERIFICATION / WELCOME
-// ============================================================
+// ======================================================
+// VERIFICATION AND WELCOME
+// ======================================================
 
 async function verifyMember(i) {
   if (!await defer(i)) return;
@@ -1232,21 +1232,24 @@ async function verifyMember(i) {
 
   await respond(i, '✅ Verification successful! Welcome to Ryvora.');
 
-  await creditVerifiedInvite(member);
+  try {
+    await creditVerifiedInvite(member);
+  } catch (error) {
+    logError('Invite credit after verification failed:', error.message);
+  }
 
   await logTo(guild, CONFIG.verifyLogChannel, {
     embeds: [
-      makeEmbed(
+      embed(
         '🔐 MEMBER VERIFIED',
-        `**Member:** <@${member.id}>\n` +
-        `**Role:** <@&${role.id}>`
+        `**Member:** <@${member.id}>\n**Role:** <@&${role.id}>`
       )
     ]
   });
 }
 
 async function welcomeMember(member) {
-  let channel = await getTextChannel(
+  let channel = await getChannel(
     member.guild,
     CONFIG.welcomeChannel
   );
@@ -1263,7 +1266,7 @@ async function welcomeMember(member) {
 
   if (!channel) return false;
 
-  const e = makeEmbed(
+  const e = embed(
     '💜 RYVORA • WELCOME',
     `Welcome ${member}!\n\n` +
     '🔐 Verify your account\n' +
@@ -1288,14 +1291,14 @@ async function welcomeMember(member) {
   return true;
 }
 
-// ============================================================
+// ======================================================
 // GIVEAWAYS
-// ============================================================
+// ======================================================
 
 function leaderboardEmbed() {
   const top = ranking().slice(0, 10);
 
-  return makeEmbed(
+  return embed(
     '🏆 RYVORA • INVITE LEADERBOARD',
     top.length
       ? top.map(
@@ -1311,10 +1314,7 @@ function giveawayEmbed() {
   const competition = db.competition;
 
   if (!competition) {
-    return makeEmbed(
-      '🎁 RYVORA • GIVEAWAY',
-      'No competition has been created.'
-    );
+    return embed('🎁 RYVORA • GIVEAWAY', 'No competition has been created.');
   }
 
   const top = ranking().slice(0, 3);
@@ -1323,9 +1323,9 @@ function giveawayEmbed() {
     ? `⏰ Ends <t:${Math.floor(competition.endsAt / 1000)}:R>`
     : '🔒 Competition ended';
 
-  return makeEmbed(
+  return embed(
     '🎉 RYVORA • INVITE COMPETITION',
-    `## INVITE FRIENDS & WIN!\n\n` +
+    '## INVITE FRIENDS & WIN!\n\n' +
     `🏆 **Prize:** ${competition.prize}\n` +
     `${status}\n\n` +
     '**Leaderboard**\n' +
@@ -1344,10 +1344,7 @@ function giveawayEmbed() {
 
 async function startGiveaway(i) {
   if (!await defer(i)) return;
-
-  if (!isAdmin(i)) {
-    return respond(i, '❌ Administrator only.');
-  }
+  if (!isAdmin(i)) return respond(i, '❌ Administrator only.');
 
   if (db.competition?.active) {
     return respond(i, '❌ End the current competition first.');
@@ -1355,7 +1352,7 @@ async function startGiveaway(i) {
 
   const channel =
     i.options.getChannel('channel') ||
-    await getTextChannel(i.guild, CONFIG.giveawayChannel) ||
+    await getChannel(i.guild, CONFIG.giveawayChannel) ||
     i.channel;
 
   if (!channel || typeof channel.send !== 'function') {
@@ -1367,10 +1364,7 @@ async function startGiveaway(i) {
   try {
     invites = await snapshotInvites(i.guild);
   } catch {
-    return respond(
-      i,
-      '❌ Bot requires Manage Server to track invites.'
-    );
+    return respond(i, '❌ Bot requires Manage Server to track invites.');
   }
 
   const days = i.options.getInteger('days', true);
@@ -1385,7 +1379,7 @@ async function startGiveaway(i) {
     messageId: null
   };
 
-  const e = makeEmbed(
+  const e = embed(
     '🎉 RYVORA • INVITE COMPETITION',
     `**Prize:** ${prize}\n` +
     `**Ends:** <t:${Math.floor(draft.endsAt / 1000)}:R>\n\n` +
@@ -1410,7 +1404,7 @@ async function startGiveaway(i) {
   db.known = {};
   db.unknownJoins = 0;
 
-  saveDb();
+  safeSave(saveDb, 'Giveaway start');
 
   return respond(i, `✅ Competition started in ${channel}.`);
 }
@@ -1419,7 +1413,7 @@ async function endGiveaway(guild) {
   if (!db.competition?.active) return false;
 
   db.competition.active = false;
-  saveDb();
+  safeSave(saveDb, 'Giveaway end');
 
   const results = ranking();
   let description = 'No eligible winner.';
@@ -1441,7 +1435,7 @@ async function endGiveaway(guild) {
 
   await logTo(guild, db.competition.channelId, {
     embeds: [
-      makeEmbed('🏆 RYVORA • COMPETITION ENDED', description)
+      embed('🏆 RYVORA • COMPETITION ENDED', description)
     ]
   });
 
@@ -1451,11 +1445,9 @@ async function endGiveaway(guild) {
 async function refreshGiveaway(guild) {
   const competition = db.competition;
 
-  if (!competitionActive() || !competition.messageId) {
-    return;
-  }
+  if (!competitionActive() || !competition.messageId) return;
 
-  const channel = await getTextChannel(
+  const channel = await getChannel(
     guild,
     competition.channelId
   );
@@ -1478,9 +1470,9 @@ async function refreshGiveaway(guild) {
   });
 }
 
-// ============================================================
-// COMMAND REGISTRATION
-// ============================================================
+// ======================================================
+// SLASH COMMANDS
+// ======================================================
 
 const commands = [
   new SlashCommandBuilder()
@@ -1600,9 +1592,9 @@ async function registerCommands() {
   log(`${commands.length} slash commands registered.`);
 }
 
-// ============================================================
-// HEALTH
-// ============================================================
+// ======================================================
+// HEALTH CHECKS
+// ======================================================
 
 async function healthEmbed(guild) {
   const bot = await guild.members.fetchMe();
@@ -1627,10 +1619,11 @@ async function healthEmbed(guild) {
     ['Manage Roles', bot.permissions.has(P.ManageRoles)],
     ['Verify role below bot', Boolean(role) &&
       bot.roles.highest.position > role.position],
-    ['Manage Server', bot.permissions.has(P.ManageGuild)]
+    ['Manage Server', bot.permissions.has(P.ManageGuild)],
+    ['Storage directory', fs.existsSync(DATA_DIR)]
   ];
 
-  return makeEmbed(
+  return embed(
     '🩺 RYVORA • HEALTH CHECK',
     checks.map(([name, ok]) =>
       `${ok ? '✅' : '❌'} ${name}`
@@ -1641,10 +1634,9 @@ async function healthEmbed(guild) {
 
 function imageHealthEmbed() {
   const results = imageHealth();
-
   const found = results.filter(item => item.exists).length;
 
-  return makeEmbed(
+  return embed(
     '🖼️ RYVORA • IMAGE HEALTH',
     `**Local images:** ${found}/${results.length}\n\n` +
     results.map(item =>
@@ -1655,9 +1647,9 @@ function imageHealthEmbed() {
   );
 }
 
-// ============================================================
-// EVENTS
-// ============================================================
+// ======================================================
+// GUILD EVENTS
+// ======================================================
 
 client.on(Events.InviteCreate, invite => {
   if (invite.guild?.id !== CONFIG.guildId) return;
@@ -1689,10 +1681,7 @@ client.on(Events.GuildMemberAdd, async member => {
   if (member.guild.id !== CONFIG.guildId) return;
 
   try {
-    const info = await queueInvite(
-      () => trackJoin(member)
-    );
-
+    const info = await queueInvite(() => trackJoin(member));
     await postInviteLog(member, info);
   } catch (error) {
     logError('Member invite error:', error.message);
@@ -1708,36 +1697,36 @@ client.on(Events.GuildMemberAdd, async member => {
 client.on(Events.GuildMemberRemove, async member => {
   if (member.guild.id !== CONFIG.guildId) return;
 
-  await queueInvite(async () => {
-    delete db.pending[member.id];
+  try {
+    await queueInvite(async () => {
+      delete db.pending[member.id];
 
-    for (const stats of Object.values(db.members)) {
-      const index = stats.joins?.indexOf(member.id) ?? -1;
+      for (const stats of Object.values(db.members)) {
+        const index = stats.joins?.indexOf(member.id) ?? -1;
 
-      if (index >= 0) {
-        stats.joins.splice(index, 1);
-        stats.invites = stats.joins.length;
+        if (index >= 0) {
+          stats.joins.splice(index, 1);
+          stats.invites = stats.joins.length;
+        }
       }
-    }
 
-    saveDb();
-  });
+      safeSave(saveDb, 'Member leave');
+    });
+  } catch (error) {
+    logError('Member removal error:', error.message);
+  }
 });
 
-// ============================================================
-// INTERACTIONS
-// ============================================================
+// ======================================================
+// INTERACTION ROUTER
+// ======================================================
 
 const processing = new Set();
 
 client.on(Events.InteractionCreate, async i => {
   if (!i.inGuild() || i.guildId !== CONFIG.guildId) return;
 
-  if (processing.has(i.id)) {
-    log(`Duplicate local interaction ignored: ${i.id}`);
-    return;
-  }
-
+  if (processing.has(i.id)) return;
   processing.add(i.id);
 
   try {
@@ -1746,10 +1735,7 @@ client.on(Events.InteractionCreate, async i => {
 
       if (name === 'setup' || name === 'verify') {
         if (!await defer(i)) return;
-
-        if (!isAdmin(i)) {
-          return respond(i, '❌ Administrator only.');
-        }
+        if (!isAdmin(i)) return respond(i, '❌ Administrator only.');
 
         const payload = name === 'setup'
           ? ticketPanel()
@@ -1767,27 +1753,19 @@ client.on(Events.InteractionCreate, async i => {
       }
 
       if (name === 'catalog') {
-        return i.reply({
-          ...catalogPanel(),
-          flags: MessageFlags.Ephemeral
-        });
+        return respond(i, catalogPanel());
       }
 
       if (name === 'welcome-test') {
         if (!await defer(i)) return;
-
-        if (!isAdmin(i)) {
-          return respond(i, '❌ Administrator only.');
-        }
+        if (!isAdmin(i)) return respond(i, '❌ Administrator only.');
 
         const member = await i.guild.members.fetch(i.user.id);
         const sent = await welcomeMember(member);
 
         return respond(
           i,
-          sent
-            ? '✅ Welcome message posted.'
-            : '❌ Welcome channel not found.'
+          sent ? '✅ Welcome message posted.' : '❌ Welcome channel not found.'
         );
       }
 
@@ -1797,31 +1775,22 @@ client.on(Events.InteractionCreate, async i => {
 
       if (name === 'invite-end') {
         if (!await defer(i)) return;
-
-        if (!isAdmin(i)) {
-          return respond(i, '❌ Administrator only.');
-        }
+        if (!isAdmin(i)) return respond(i, '❌ Administrator only.');
 
         const ended = await endGiveaway(i.guild);
 
         return respond(
           i,
-          ended
-            ? '✅ Competition ended.'
-            : '❌ No active competition.'
+          ended ? '✅ Competition ended.' : '❌ No active competition.'
         );
       }
 
       if (name === 'invite-top') {
         const e = leaderboardEmbed();
 
-        return i.reply({
+        return respond(i, {
           embeds: [e],
-          files: imageFor(
-            e,
-            'LEADERBOARD',
-            IMAGES.leaderboard
-          )
+          files: imageFor(e, 'LEADERBOARD', IMAGES.leaderboard)
         });
       }
 
@@ -1831,7 +1800,7 @@ client.on(Events.InteractionCreate, async i => {
 
         return respond(i, {
           embeds: [
-            makeEmbed(
+            embed(
               '📨 RYVORA • INVITES',
               `**Member:** ${user}\n` +
               `**Verified invites:** ${count}`
@@ -1843,9 +1812,9 @@ client.on(Events.InteractionCreate, async i => {
       if (name === 'ryvora-status') {
         return respond(i, {
           embeds: [
-            makeEmbed(
+            embed(
               '💜 RYVORA • SYSTEM STATUS',
-              `🟢 **Connected**\n` +
+              '🟢 **Connected**\n' +
               `🎫 Tickets: ${Object.keys(state.tickets).length}\n` +
               `🛒 Products: ${PRODUCTS.length}\n` +
               `🏆 Competition: ${
@@ -1854,7 +1823,8 @@ client.on(Events.InteractionCreate, async i => {
               `📨 Unknown joins: ${db.unknownJoins}\n` +
               `🖼️ Images: ${
                 imageHealth().filter(item => item.exists).length
-              }/${allImageEntries().length}\n` +
+              }/${allImages().length}\n` +
+              `💾 Storage: ${DATA_DIR}\n` +
               `⏱️ Uptime: ${Math.floor(process.uptime() / 60)} min`
             )
           ]
@@ -1863,10 +1833,7 @@ client.on(Events.InteractionCreate, async i => {
 
       if (name === 'ryvora-health') {
         if (!await defer(i)) return;
-
-        if (!isAdmin(i)) {
-          return respond(i, '❌ Administrator only.');
-        }
+        if (!isAdmin(i)) return respond(i, '❌ Administrator only.');
 
         return respond(i, {
           embeds: [await healthEmbed(i.guild)]
@@ -1874,9 +1841,7 @@ client.on(Events.InteractionCreate, async i => {
       }
 
       if (name === 'ryvora-images') {
-        if (!isAdmin(i)) {
-          return respond(i, '❌ Administrator only.');
-        }
+        if (!isAdmin(i)) return respond(i, '❌ Administrator only.');
 
         return respond(i, {
           embeds: [imageHealthEmbed()]
@@ -1885,10 +1850,7 @@ client.on(Events.InteractionCreate, async i => {
 
       if (name === 'ryvora-image-test') {
         if (!await defer(i)) return;
-
-        if (!isAdmin(i)) {
-          return respond(i, '❌ Administrator only.');
-        }
+        if (!isAdmin(i)) return respond(i, '❌ Administrator only.');
 
         const requested = i.options
           .getString('image', true)
@@ -1897,27 +1859,20 @@ client.on(Events.InteractionCreate, async i => {
 
         const filename = `${requested}.png`;
 
-        const entry = allImageEntries().find(
+        const entry = allImages().find(
           item => item.filename === filename
         );
 
         if (!entry) {
-          return respond(
-            i,
-            '❌ Unknown image. Use /ryvora-images to see valid names.'
-          );
+          return respond(i, '❌ Unknown image. Use /ryvora-images.');
         }
 
-        const e = makeEmbed(
+        const e = embed(
           '🖼️ RYVORA • IMAGE TEST',
           `Testing \`${entry.filename}\``
         );
 
-        const files = imageFor(
-          e,
-          entry.key,
-          entry.filename
-        );
+        const files = imageFor(e, entry.key, entry.filename);
 
         if (!files.length && !e.data.image) {
           return respond(i, `❌ Image not found: ${filename}`);
@@ -1938,20 +1893,14 @@ client.on(Events.InteractionCreate, async i => {
 
         const user = i.options.getUser('user', true);
 
-        await i.channel.permissionOverwrites.edit(
-          user.id,
-          {
-            ViewChannel: true,
-            SendMessages: true,
-            ReadMessageHistory: true,
-            AttachFiles: true
-          }
-        );
+        await i.channel.permissionOverwrites.edit(user.id, {
+          ViewChannel: true,
+          SendMessages: true,
+          ReadMessageHistory: true,
+          AttachFiles: true
+        });
 
-        return respond(
-          i,
-          `✅ Added <@${user.id}> to this ticket.`
-        );
+        return respond(i, `✅ Added <@${user.id}> to this ticket.`);
       }
 
       const product = productByKey.get(name);
@@ -1960,10 +1909,7 @@ client.on(Events.InteractionCreate, async i => {
         if (!await defer(i)) return;
 
         if (!isManager(i)) {
-          return respond(
-            i,
-            '❌ Manage Server permission required.'
-          );
+          return respond(i, '❌ Manage Server permission required.');
         }
 
         await i.channel.send({
@@ -1971,10 +1917,7 @@ client.on(Events.InteractionCreate, async i => {
           allowedMentions: { parse: [] }
         });
 
-        return respond(
-          i,
-          `✅ ${product.title} product card posted.`
-        );
+        return respond(i, `✅ ${product.title} product card posted.`);
       }
     }
 
@@ -2010,14 +1953,9 @@ client.on(Events.InteractionCreate, async i => {
       if (i.customId === 'ryvora_catalog') {
         const product = productByKey.get(i.values[0]);
 
-        if (!product) {
-          return respond(i, '❌ Product not found.');
-        }
+        if (!product) return respond(i, '❌ Product not found.');
 
-        return i.reply({
-          ...productCard(product),
-          flags: MessageFlags.Ephemeral
-        });
+        return respond(i, productCard(product));
       }
     }
   } catch (error) {
@@ -2026,10 +1964,7 @@ client.on(Events.InteractionCreate, async i => {
       error.stack || error.message
     );
 
-    if ([10062, 40060].includes(error.code)) {
-      return;
-    }
-
+    if ([10062, 40060].includes(error.code)) return;
     if (!i.isRepliable()) return;
 
     try {
@@ -2045,14 +1980,15 @@ client.on(Events.InteractionCreate, async i => {
   }
 });
 
-// ============================================================
+// ======================================================
 // STARTUP
-// ============================================================
+// ======================================================
 
 let giveawayTimer = null;
 
 client.once(Events.ClientReady, async () => {
   log(`Logged in as ${client.user.tag}`);
+  log(`Storage directory: ${DATA_DIR}`);
 
   const guild =
     client.guilds.cache.get(CONFIG.guildId) ||
@@ -2077,9 +2013,7 @@ client.once(Events.ClientReady, async () => {
   log(`Local images: ${found}/${images.length}`);
 
   for (const item of images) {
-    if (!item.exists) {
-      log(`Missing local image: ${item.filename}`);
-    }
+    if (!item.exists) log(`Missing local image: ${item.filename}`);
   }
 
   const tick = async () => {
@@ -2092,7 +2026,7 @@ client.once(Events.ClientReady, async () => {
         await refreshGiveaway(guild);
       }
     } catch (error) {
-      logError('Giveaway update:', error.message);
+      logError('Giveaway update failed:', error.message);
     }
   };
 
@@ -2101,6 +2035,7 @@ client.once(Events.ClientReady, async () => {
   giveawayTimer = setInterval(tick, 60000);
 
   log(`Products loaded: ${PRODUCTS.length}`);
+  log(`Slash commands: ${commands.length}`);
   log('Ticket system ready.');
   log('Verification system ready.');
   log('Invite system ready.');
@@ -2108,9 +2043,9 @@ client.once(Events.ClientReady, async () => {
   log('All Ryvora systems initialized.');
 });
 
-// ============================================================
-// ERROR HANDLING
-// ============================================================
+// ======================================================
+// ERROR HANDLING AND SHUTDOWN
+// ======================================================
 
 client.on(Events.Error, error => {
   logError('Discord client error:', error);
@@ -2129,9 +2064,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
   process.once(signal, () => {
     log(`Shutting down (${signal})...`);
 
-    if (giveawayTimer) {
-      clearInterval(giveawayTimer);
-    }
+    if (giveawayTimer) clearInterval(giveawayTimer);
 
     client.destroy();
     process.exit(0);
