@@ -27,6 +27,7 @@ const {
   ChannelType,
   PermissionFlagsBits: P,
   Events,
+  AuditLogEvent,
   REST,
   Routes,
   SlashCommandBuilder,
@@ -2378,6 +2379,107 @@ client.on(Events.InviteCreate, invite => safeEvent(audit(invite.guild, 'security
 client.on(Events.InviteDelete, invite => safeEvent(audit(invite.guild, 'security', 'INVITE DELETED', [
   ['Code', invite.code]
 ])));
+
+// ======================================================
+// RYVORA SECURITY V6 — native moderation and audit protection
+// ======================================================
+const SECURITY = {
+  logChannel: envId('ANTI_NUKE_LOG_CHANNEL_ID') || CONFIG.securityLogChannel,
+  exempt: new Set((process.env.SECURITY_TRUSTED_IDS || '').split(',').map(x => x.trim()).filter(x => /^\d{17,20}$/.test(x))),
+  linksAllowed: new Set((process.env.SECURITY_ALLOWED_DOMAINS || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean)),
+  actions: new Map(), messages: new Map(), joins: [],
+  destructive: new Map([
+    [AuditLogEvent.ChannelDelete, ['Channel deletion', 2]],
+    [AuditLogEvent.RoleDelete, ['Role deletion', 2]],
+    [AuditLogEvent.WebhookCreate, ['Webhook created', 3]],
+    [AuditLogEvent.BotAdd, ['Bot added', 1]],
+    [AuditLogEvent.RoleUpdate, ['Role permissions changed', 4]],
+    [AuditLogEvent.ChannelUpdate, ['Channel updated', 6]],
+    [AuditLogEvent.MemberBanAdd, ['Member banned', 4]],
+    [AuditLogEvent.MemberKick, ['Member kicked', 4]]
+  ])
+};
+function securityTrusted(guild, id) {
+  return !id || id === guild.ownerId || id === client.user?.id || SECURITY.exempt.has(id);
+}
+async function securityNotice(guild, title, detail, color = CONFIG.red) {
+  log('[SECURITY]', title, detail);
+  const e = embed(`🛡️ RYVORA SECURITY | ${title}`, String(detail).slice(0, 3800), color);
+  await logTo(guild, SECURITY.logChannel, {embeds:[e]});
+}
+async function securityBan(guild, id, reason) {
+  if (securityTrusted(guild, id)) return 'exempt';
+  const me = await guild.members.fetchMe();
+  const target = await guild.members.fetch(id).catch(() => null);
+  if (!me.permissions.has(P.BanMembers)) return 'missing Ban Members permission';
+  if (target && !target.bannable) return 'cannot ban (role hierarchy / permissions)';
+  try { await guild.members.ban(id, {reason:reason.slice(0, 450), deleteMessageSeconds:0}); return 'banned'; }
+  catch (err) { return `ban failed: ${err.message}`; }
+}
+function securityWindow(map, key, duration) {
+  const now = Date.now();
+  const recent = (map.get(key) || []).filter(time => now - time < duration);
+  recent.push(now);
+  map.set(key, recent);
+  if (map.size > 15000) for (const [k,v] of map) if (v.every(t => now-t>duration)) map.delete(k);
+  return recent.length;
+}
+client.on(Events.GuildAuditLogEntryCreate, (entry, guild) => safeEvent((async () => {
+  if (!auditGuild(guild) || !SECURITY.destructive.has(entry.action)) return;
+  const executorId = entry.executorId;
+  if (securityTrusted(guild, executorId)) return;
+  const [label, limit] = SECURITY.destructive.get(entry.action);
+  const count = securityWindow(SECURITY.actions, `${guild.id}:${executorId}:${entry.action}`, 12000);
+  // Bot additions are always unauthorized unless the executor is explicitly trusted.
+  if (entry.action === AuditLogEvent.BotAdd) {
+    const botId = entry.targetId;
+    let result = 'Bot not found';
+    const member = botId && await guild.members.fetch(botId).catch(() => null);
+    if (member?.user.bot) {
+      try { if (member.kickable) { await member.kick('Ryvora Security: unauthorized bot'); result='Bot removed'; }
+        else result='Cannot kick bot (role hierarchy)'; }
+      catch (err) { result=`Bot removal failed: ${err.message}`; }
+    }
+    const punishment = await securityBan(guild, executorId, 'Ryvora Security: unauthorized bot addition');
+    return securityNotice(guild, 'UNAUTHORIZED BOT', `Executor: <@${executorId}>\nBot: ${botId}\nResponse: ${result}\nExecutor: ${punishment}`);
+  }
+  if (count < limit) return;
+  const guardKey = `${guild.id}:${executorId}`;
+  if (SECURITY.actions.get(`punished:${guardKey}`)?.[0] > Date.now()-60000) return;
+  SECURITY.actions.set(`punished:${guardKey}`, [Date.now()]);
+  const punishment = await securityBan(guild, executorId, `Ryvora Security: ${count} ${label} events in 12s`);
+  await securityNotice(guild, 'ANTI-NUKE TRIGGERED', `Executor: <@${executorId}> (${executorId})\nAction: ${label}\nCount: ${count} in 12 seconds\nResponse: ${punishment}\nDeleted resources cannot be fully restored automatically.`);
+})()));
+const SECURITY_LINK = /(?:https?:\/\/|www\.|discord\.gg\/|discord(?:app)?\.com\/invite\/)[^\s<>]+/ig;
+client.on(Events.MessageCreate, message => safeEvent((async () => {
+  if (!auditGuild(message.guild) || message.author.bot || !message.member) return;
+  if (securityTrusted(message.guild, message.author.id) || message.member.permissions.has(P.Administrator)) return;
+  const key = `${message.guildId}:${message.author.id}`;
+  const count = securityWindow(SECURITY.messages, key, 7000);
+  const urls = [...message.content.matchAll(SECURITY_LINK)].map(m=>m[0]);
+  const blocked = urls.some(url => {
+    try { const normalized = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+      const host = new URL(normalized).hostname.toLowerCase();
+      return ![...SECURITY.linksAllowed].some(allowed => host === allowed || host.endsWith(`.${allowed}`));
+    } catch { return true; }
+  });
+  const mentionSpam = (message.mentions.users.size + message.mentions.roles.size) >= 6 || message.mentions.everyone;
+  if (!blocked && count < 7 && !mentionSpam) return;
+  if (message.deletable) await message.delete().catch(()=>{});
+  let response = 'message deleted';
+  if (count >= 10 || mentionSpam) {
+    try { if (message.member.moderatable) { await message.member.timeout(10*60*1000, 'Ryvora Security: spam'); response += ', timed out 10m'; } }
+    catch(err) { response += `, timeout failed: ${err.message}`; }
+  }
+  await securityNotice(message.guild, 'MESSAGE PROTECTION', `Member: <@${message.author.id}>\nChannel: <#${message.channelId}>\nReason: ${blocked?'blocked link':mentionSpam?'mass mentions':'message flood'}\nResponse: ${response}`, CONFIG.purple);
+})()));
+client.on(Events.GuildMemberAdd, member => safeEvent((async () => {
+  if (!auditGuild(member.guild)) return;
+  const now = Date.now();
+  SECURITY.joins = SECURITY.joins.filter(t => now-t < 15000);
+  SECURITY.joins.push(now);
+  if (SECURITY.joins.length === 12) await securityNotice(member.guild, 'POSSIBLE JOIN RAID', '12 members joined within 15 seconds. Review Server Settings > Safety Setup and enable Discord AutoMod / verification.');
+})()));
 
 // ======================================================
 // STARTUP
