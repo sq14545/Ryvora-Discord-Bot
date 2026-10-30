@@ -23,6 +23,7 @@ const {
   ButtonBuilder,
   ButtonStyle,
   StringSelectMenuBuilder,
+  UserSelectMenuBuilder,
   ChannelType,
   PermissionFlagsBits: P,
   Events,
@@ -732,6 +733,17 @@ function ticketButtons(claimed = false) {
         .setLabel('Close Ticket')
         .setEmoji('🔒')
         .setStyle(ButtonStyle.Danger)
+    ),
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder().setCustomId('ryvora_admin_tools')
+        .setPlaceholder('⚙️ Ticket management • Administrator')
+        .addOptions([
+          {label:'Add Member',value:'add',emoji:'👤'},
+          {label:'Remove Member',value:'remove',emoji:'🚫'},
+          {label:'Unclaim',value:'unclaim',emoji:'🔓'},
+          {label:'Notify Owner',value:'notify',emoji:'🔔'},
+          {label:'Transfer Ticket',value:'transfer',emoji:'🔄'}
+        ])
     )
   ];
 }
@@ -971,6 +983,96 @@ async function claimTicket(i) {
     ['Owner', `<@${ticket.ownerId}>`]
   ]);
   return respond(i, '✅ Ticket claimed successfully.');
+}
+
+const notifyCooldown = new Map();
+
+async function adminTicketTool(i) {
+  if (!isAdmin(i)) return respond(i, '❌ Administrator permission required.');
+  if (!isTicket(i.channel)) return respond(i, '❌ Not a ticket channel.');
+  const action = i.values[0];
+  const ticket = state.tickets[i.channelId] ||= {
+    ownerId: ownerFrom(i.channel), category: 'support', claimedBy: null, createdAt: Date.now()
+  };
+  if (['add','remove','transfer'].includes(action)) {
+    return respond(i, {
+      content: 'Select a member for: ' + action,
+      components: [new ActionRowBuilder().addComponents(
+        new UserSelectMenuBuilder().setCustomId('ryvora_admin_user:' + action)
+          .setPlaceholder('Select a member').setMinValues(1).setMaxValues(1)
+      )]
+    });
+  }
+  if (action === 'unclaim') {
+    if (!ticket.claimedBy) return respond(i, '⚠️ Ticket is not claimed.');
+    const previous = ticket.claimedBy;
+    ticket.claimedBy = null;
+    safeSave(saveState, 'Ticket unclaim');
+    const messages = await i.channel.messages.fetch({limit: 50}).catch(() => null);
+    const panel = messages?.find(m => m.author.id === client.user.id &&
+      m.components?.some(r => r.components?.some(c => c.customId === 'ryvora_claim_ticket')));
+    if (panel) await panel.edit({components:ticketButtons(false)}).catch(e=>logError('Unclaim panel:',e.message));
+    await audit(i.guild,'ticket','TICKET UNCLAIMED', [['Previous staff',`<@${previous}>`],['By',`<@${i.user.id}>`]]);
+    return respond(i,'✅ Ticket is unclaimed.');
+  }
+  if (action === 'notify') {
+    const last = notifyCooldown.get(i.channelId) || 0;
+    if (Date.now()-last < 600000) return respond(i,'⏳ Please wait 10 minutes between notifications.');
+    const ownerId = ticket.ownerId || ownerFrom(i.channel);
+    if (!ownerId) return respond(i,'❌ Ticket owner not found.');
+    await i.channel.send({content:`🔔 <@${ownerId}>, the support team is waiting for your response.`,
+      allowedMentions:{users:[ownerId]}});
+    notifyCooldown.set(i.channelId,Date.now());
+    await audit(i.guild,'ticket','OWNER NOTIFIED',[['Owner',`<@${ownerId}>`],['By',`<@${i.user.id}>`]]);
+    return respond(i,'✅ Owner notified.');
+  }
+  return respond(i,'❌ Unknown action.');
+}
+
+async function adminTicketUser(i) {
+  if (!await defer(i)) return;
+  if (!isAdmin(i)) return respond(i,'❌ Administrator permission required.');
+  if (!isTicket(i.channel)) return respond(i,'❌ Not a ticket channel.');
+  const action=i.customId.split(':')[1];
+  if (!['add','remove','transfer'].includes(action)) return respond(i,'❌ Invalid action.');
+  const id=i.values[0];
+  const member=await i.guild.members.fetch(id).catch(()=>null);
+  if (!member) return respond(i,'❌ Member not found.');
+  const ticket=state.tickets[i.channelId] ||= {
+    ownerId:ownerFrom(i.channel),category:'support',claimedBy:null,createdAt:Date.now()
+  };
+  if (action==='remove' && (id===ticket.ownerId || id===client.user.id))
+    return respond(i,'❌ Cannot remove ticket owner or bot.');
+  if (action==='transfer' && !(member.permissions.has(P.Administrator) ||
+    member.roles.cache.has(CONFIG.staffRole)))
+    return respond(i,'❌ Transfer target must be staff or Administrator.');
+  try {
+    if (action==='remove') {
+      await i.channel.permissionOverwrites.edit(id,{ViewChannel:false,SendMessages:false},
+        {reason:`Ryvora ticket removal by ${i.user.id}`});
+    } else {
+      await i.channel.permissionOverwrites.edit(id,{
+        ViewChannel:true,SendMessages:true,ReadMessageHistory:true
+      },{reason:`Ryvora ticket ${action} by ${i.user.id}`});
+      if (action==='transfer') {
+        ticket.claimedBy=id;
+        safeSave(saveState,'Ticket transfer');
+        const messages=await i.channel.messages.fetch({limit:50}).catch(()=>null);
+        const panel=messages?.find(m=>m.author.id===client.user.id &&
+          m.components?.some(r=>r.components?.some(c=>c.customId==='ryvora_claim_ticket')));
+        if(panel) await panel.edit({components:ticketButtons(true)}).catch(e=>logError('Transfer panel:',e.message));
+      }
+    }
+  } catch(error) {
+    logError('Ticket permissions:',error);
+    return respond(i,'❌ Failed to update ticket permissions. Check bot Manage Channels permission.');
+  }
+  await audit(i.guild,'ticket',`TICKET ${action.toUpperCase()}`,[
+    ['Member',`<@${id}>`],['Administrator',`<@${i.user.id}>`],['Ticket',i.channel.name]
+  ]);
+  await i.channel.send({content:`⚙️ **${action.toUpperCase()}** • <@${id}> • by <@${i.user.id}>`,
+    allowedMentions:{parse:[]}}).catch(()=>{});
+  return respond(i,`✅ ${action} completed for <@${id}>.`);
 }
 
 async function createTranscript(channel) {
@@ -2021,8 +2123,8 @@ client.on(Events.InteractionCreate, async i => {
       if (name === 'ticket-add') {
         if (!await defer(i)) return;
 
-        if (!isStaff(i) || !isTicket(i.channel)) {
-          return respond(i, '❌ Staff ticket only.');
+        if (!isAdmin(i) || !isTicket(i.channel)) {
+          return respond(i, '❌ Administrator ticket only.');
         }
 
         const user = i.options.getUser('user', true);
@@ -2083,7 +2185,11 @@ client.on(Events.InteractionCreate, async i => {
       }
     }
 
+    if (i.isUserSelectMenu() && i.customId.startsWith('ryvora_admin_user:')) {
+      return adminTicketUser(i);
+    }
     if (i.isStringSelectMenu()) {
+      if (i.customId === 'ryvora_admin_tools') return adminTicketTool(i);
       if (i.customId === 'ryvora_verify_select') {
         if (i.values[0] !== 'verify') return respond(i, 'Invalid verification option.');
         return verifyMember(i);
