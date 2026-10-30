@@ -58,11 +58,17 @@ const CONFIG = {
   red: 0xED4245
 };
 
-for (const key of [
-  'token', 'clientId', 'guildId',
-  'ticketCategory', 'staffRole', 'verifyRole'
+// Core credentials are required. Feature-specific IDs are validated at use time.
+const missingCore = ['token', 'clientId', 'guildId'].filter(key => !CONFIG[key]);
+if (missingCore.length) {
+  throw new Error(`Missing core configuration: ${missingCore.join(', ')}. Check Railway Variables.`);
+}
+for (const [key, env] of [
+  ['ticketCategory', 'TICKET_CATEGORY_ID'],
+  ['staffRole', 'STAFF_ROLE_ID'],
+  ['verifyRole', 'VERIFY_ROLE_ID']
 ]) {
-  if (!CONFIG[key]) throw new Error(`Missing configuration: ${key}`);
+  if (!CONFIG[key]) console.warn(`[RYVORA] ${env} is missing; related features will be unavailable.`);
 }
 
 const log = (...args) => console.log('[RYVORA]', ...args);
@@ -695,6 +701,10 @@ async function createTicket(i, categoryKey, productKey = null) {
   try {
     const guild = i.guild;
 
+    if (!CONFIG.ticketCategory || !CONFIG.staffRole) {
+      return respond(i, '❌ Ticket configuration is missing: TICKET_CATEGORY_ID or STAFF_ROLE_ID.');
+    }
+
     const parent = await guild.channels
       .fetch(CONFIG.ticketCategory)
       .catch(() => null);
@@ -834,10 +844,6 @@ async function createTicket(i, categoryKey, productKey = null) {
     await respond(i, `✅ Your ticket is ready: ${created}`);
     announced = true;
 
-    await audit(guild, 'ticket', 'TICKET CREATED', [
-      ['Owner', `<@${i.user.id}>`], ['Category', category.name],
-      ['Product', product?.title || 'None'], ['Channel', `${created}`]
-    ]);
     await logTo(guild, CONFIG.ticketLogChannel, {
       embeds: [
         embed(
@@ -991,6 +997,8 @@ async function closeTicket(i) {
       logError('Transcript failed:', error.message);
     }
 
+    if (!transcript) return respond(i, '❌ Transcript generation failed. Ticket was kept open.');
+
     const ticket = state.tickets[i.channelId];
 
     const summary = embed(
@@ -1001,9 +1009,9 @@ async function closeTicket(i) {
       `**Category:** ${ticket?.category || 'Unknown'}\n` +
       `**Claimed by:** ${ticket?.claimedBy ? `<@${ticket.claimedBy}>` : 'None'}`
     );
-    const summarySaved = await logTo(i.guild, CONFIG.ticketLogChannel, {
-      embeds: [summary]
-    });
+    const summarySaved = CONFIG.ticketLogChannel === CONFIG.transcriptLogChannel
+      ? true
+      : await logTo(i.guild, CONFIG.ticketLogChannel, { embeds: [summary] });
     const transcriptSaved = transcript && await logTo(
       i.guild, CONFIG.transcriptLogChannel,
       { embeds: [summary], files: [transcript] }
@@ -1233,6 +1241,7 @@ async function verifyMember(i) {
   if (!await defer(i)) return;
 
   const guild = i.guild;
+  if (!CONFIG.verifyRole) return respond(i, '❌ VERIFY_ROLE_ID is missing in Railway Variables.');
   const member = await guild.members.fetch(i.user.id);
   const role = await guild.roles
     .fetch(CONFIG.verifyRole)
@@ -1241,7 +1250,7 @@ async function verifyMember(i) {
   const bot = await guild.members.fetchMe();
 
   if (!role) {
-    return respond(i, '❌ Verification role not found.');
+    return respond(i, '❌ Verification role not found. Check VERIFY_ROLE_ID.');
   }
 
   if (
@@ -1268,9 +1277,6 @@ async function verifyMember(i) {
     logError('Invite credit after verification failed:', error.message);
   }
 
-  await audit(guild, 'verify', 'MEMBER VERIFIED', [
-    ['Member', `<@${member.id}>`], ['Role', `<@&${role.id}>`]
-  ]);
   await logTo(guild, CONFIG.verifyLogChannel, {
     embeds: [
       embed(
