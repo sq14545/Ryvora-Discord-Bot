@@ -3,6 +3,13 @@
 
 require('dotenv').config();
 
+function envId(name) {
+  const raw = String(process.env[name] ?? '').trim().replace(/^['"]|['"]$/g, '').trim();
+  return raw;
+}
+function idConfigured(name) { return /^\d{17,20}$/.test(envId(name)); }
+
+
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -32,11 +39,11 @@ const {
 
 const CONFIG = {
   token: process.env.DISCORD_TOKEN,
-  clientId: process.env.CLIENT_ID,
-  guildId: process.env.GUILD_ID,
-  ticketCategory: process.env.TICKET_CATEGORY_ID,
-  staffRole: process.env.STAFF_ROLE_ID,
-  verifyRole: process.env.VERIFY_ROLE_ID,
+  clientId: envId('CLIENT_ID'),
+  guildId: envId('GUILD_ID'),
+  ticketCategory: envId('TICKET_CATEGORY_ID'),
+  staffRole: envId('STAFF_ROLE_ID'),
+  verifyRole: envId('VERIFY_ROLE_ID'),
   welcomeChannel: process.env.WELCOME_CHANNEL_ID,
   giveawayChannel: process.env.GIVEAWAY_CHANNEL_ID,
   inviteLogChannel: process.env.INVITE_LOG_CHANNEL_ID,
@@ -68,10 +75,22 @@ for (const [key, env] of [
   ['staffRole', 'STAFF_ROLE_ID'],
   ['verifyRole', 'VERIFY_ROLE_ID']
 ]) {
-  if (!CONFIG[key]) console.warn(`[RYVORA] ${env} is missing; related features will be unavailable.`);
+  if (!/^\d{17,20}$/.test(CONFIG[key] || '')) console.warn(`[RYVORA] ${env} is missing or invalid; related features will be unavailable.`);
 }
 
 const log = (...args) => console.log('[RYVORA]', ...args);
+function configReport() {
+  for (const [name, value] of [
+    ['TICKET_CATEGORY_ID', CONFIG.ticketCategory],
+    ['STAFF_ROLE_ID', CONFIG.staffRole],
+    ['VERIFY_ROLE_ID', CONFIG.verifyRole],
+    ['GUILD_ID', CONFIG.guildId]
+  ]) {
+    console.log(`[RYVORA CONFIG] ${name}: ${/^\d{17,20}$/.test(value || '') ? 'VALID' : value ? 'INVALID FORMAT' : 'MISSING'} (length=${(value || '').length})`);
+  }
+}
+configReport();
+
 const logError = (...args) => console.error('[RYVORA]', ...args);
 
 const ROOT = __dirname;
@@ -701,8 +720,11 @@ async function createTicket(i, categoryKey, productKey = null) {
   try {
     const guild = i.guild;
 
-    if (!CONFIG.ticketCategory || !CONFIG.staffRole) {
-      return respond(i, '❌ Ticket configuration is missing: TICKET_CATEGORY_ID or STAFF_ROLE_ID.');
+    if (!idConfigured('TICKET_CATEGORY_ID') || !idConfigured('STAFF_ROLE_ID')) {
+      const missing = ['TICKET_CATEGORY_ID', 'STAFF_ROLE_ID']
+        .filter(name => !idConfigured(name));
+      logError('Ticket configuration missing/invalid:', missing.join(', '));
+      return respond(i, `❌ Ticket configuration invalid: ${missing.join(', ')}. Check Railway deployment variables and restart.`);
     }
 
     const parent = await guild.channels
@@ -710,7 +732,8 @@ async function createTicket(i, categoryKey, productKey = null) {
       .catch(() => null);
 
     if (parent?.type !== ChannelType.GuildCategory) {
-      return respond(i, '❌ Ticket category is configured incorrectly.');
+      logError('Ticket category not found / not a category:', CONFIG.ticketCategory);
+      return respond(i, '❌ TICKET_CATEGORY_ID does not point to a category in this server.');
     }
 
     const bot = await guild.members.fetchMe();
@@ -895,7 +918,7 @@ async function claimTicket(i) {
 
   await i.message.edit({
     components: ticketButtons(true)
-  });
+  }).catch(error => logError('Claim button update failed:', error.message));
 
   await i.channel.send({
     embeds: [
@@ -1241,10 +1264,10 @@ async function verifyMember(i) {
   if (!await defer(i)) return;
 
   const guild = i.guild;
-  if (!CONFIG.verifyRole) return respond(i, '❌ VERIFY_ROLE_ID is missing in Railway Variables.');
+  if (!idConfigured('VERIFY_ROLE_ID')) return respond(i, '❌ VERIFY_ROLE_ID is missing or invalid in Railway Variables.');
   const member = await guild.members.fetch(i.user.id);
   const role = await guild.roles
-    .fetch(CONFIG.verifyRole)
+    .fetch(CONFIG.verifyRole || '0')
     .catch(() => null);
 
   const bot = await guild.members.fetchMe();
@@ -1645,18 +1668,21 @@ async function healthEmbed(guild) {
   const bot = await guild.members.fetchMe();
 
   const role = await guild.roles
-    .fetch(CONFIG.verifyRole)
+    .fetch(CONFIG.verifyRole || '0')
     .catch(() => null);
 
   const category = await guild.channels
-    .fetch(CONFIG.ticketCategory)
+    .fetch(CONFIG.ticketCategory || '0')
     .catch(() => null);
 
   const staffRole = await guild.roles
-    .fetch(CONFIG.staffRole)
+    .fetch(CONFIG.staffRole || '0')
     .catch(() => null);
 
   const checks = [
+    ['TICKET_CATEGORY_ID variable', idConfigured('TICKET_CATEGORY_ID')],
+    ['STAFF_ROLE_ID variable', idConfigured('STAFF_ROLE_ID')],
+    ['VERIFY_ROLE_ID variable', idConfigured('VERIFY_ROLE_ID')],
     ['Ticket category', category?.type === ChannelType.GuildCategory],
     ['Staff role', Boolean(staffRole)],
     ['Verify role', Boolean(role)],
@@ -2061,7 +2087,7 @@ async function audit(guild, kind, title, fields = []) {
   const channelId = CONFIG[LOG_TYPES[kind]];
   if (!channelId) return false;
   const e = embed(`RYVORA | ${title}`, 'Event recorded by Ryvora audit system.');
-  e.addFields(fields.map(([name, value]) => ({
+  if (fields.length) e.addFields(fields.map(([name, value]) => ({
     name: short(name, 256),
     value: short(value, 1024),
     inline: false
@@ -2203,7 +2229,7 @@ client.once(Events.ClientReady, async () => {
   try {
     await registerCommands();
   } catch (error) {
-    logError('Command registration failed:', error.message);
+    logError('Command registration failed:', error.stack || error.message);
   }
 
   await audit(guild, 'bot', 'BOT ONLINE', [
@@ -2242,8 +2268,8 @@ client.once(Events.ClientReady, async () => {
 
   log(`Products loaded: ${PRODUCTS.length}`);
   log(`Slash commands: ${commands.length}`);
-  log('Ticket system ready.');
-  log('Verification system ready.');
+  log('Ticket system:', idConfigured('TICKET_CATEGORY_ID') && idConfigured('STAFF_ROLE_ID') ? 'configured' : 'missing configuration');
+  log('Verification system:', idConfigured('VERIFY_ROLE_ID') ? 'configured' : 'missing configuration');
   log('Invite system ready.');
   log('Image system ready.');
   log('All Ryvora systems initialized.');
