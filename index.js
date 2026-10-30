@@ -29,7 +29,11 @@ const {
   REST,
   Routes,
   SlashCommandBuilder,
-  MessageFlags
+  MessageFlags,
+  ContainerBuilder,
+  TextDisplayBuilder,
+  MediaGalleryBuilder,
+  SeparatorBuilder
 } = require('discord.js');
 
 // ======================================================
@@ -550,64 +554,121 @@ async function logTo(guild, channelId, payload) {
 // PANELS
 // ======================================================
 
+// RYVORA V2 DISPLAY PANELS
+// Components V2 keeps text, selection and artwork in the requested order.
+// If discord.js is older than 14.19, use a clean legacy embed without crashing.
+const displayV2Available = Boolean(
+  ContainerBuilder && TextDisplayBuilder && MediaGalleryBuilder &&
+  SeparatorBuilder && MessageFlags.IsComponentsV2
+);
+
+function v2Media(container, key, filename) {
+  const holder = new EmbedBuilder();
+  const files = imageFor(holder, key, filename);
+  const imageUrl = holder.toJSON().image?.url;
+  if (imageUrl) {
+    container.addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(item =>
+        item.setURL(imageUrl).setDescription('Ryvora Shop banner')
+      )
+    );
+  }
+  return files;
+}
+
+function makePanelMenu(customId, placeholder, options) {
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(customId)
+      .setPlaceholder(placeholder)
+      .addOptions(options)
+  );
+}
+
 function ticketPanel() {
-  const e = embed(
-    '🎟️  Ryvora × Tickets',
-    '━━━━━━━━━━━━━━━━━━━━━━━━━━\\n' +
-    '**RYVORA  /  PRIVATE SUPPORT**\\n\\n' +
-    'Choose the category that matches your request.\\n' +
-    'Our team will assist you in a private channel.\\n\\n' +
-    Object.values(CATEGORIES).map(c => `${c.emoji}  **${c.name}**`).join('\\n') +
-    '\\n\\n━━━━━━━━━━━━━━━━━━━━━━━━━━\\n' +
-    '✦ One open ticket per member • Please avoid duplicate requests.'
-  ).setAuthor({ name: 'RYVORA SHOP  •  SERVICE DESK' });
-
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId('ryvora_ticket_category')
-    .setPlaceholder('Select your ticket category...')
-    .addOptions(Object.entries(CATEGORIES).map(([value, c]) => ({
-      label: c.name, value, emoji: c.emoji,
-      description: {
-        purchase: 'Place an order',
+  const row = makePanelMenu(
+    'ryvora_ticket_category',
+    'Choose a ticket category...',
+    Object.entries(CATEGORIES).map(([key, category]) => ({
+      label: category.name,
+      value: key,
+      emoji: category.emoji,
+      description: ({
+        purchase: 'Orders and purchases',
         pre_sale: 'Questions before buying',
-        support: 'Get technical assistance',
-        hwid_reset: 'Request an HWID reset',
-        media_reseller: 'Media and reseller enquiries'
-      }[value] || 'Contact the team'
-    })));
+        support: 'Technical support',
+        hwid_reset: 'Reset assistance',
+        media_reseller: 'Media and reseller requests'
+      })[key] || 'Contact the support team'
+    }))
+  );
 
+  if (displayV2Available) {
+    const container = new ContainerBuilder()
+      .setAccentColor(CONFIG.purple)
+      .addTextDisplayComponents(t => t.setContent('## 🎟️  Ryvora × Tickets'))
+      .addSeparatorComponents(s => s.setDivider(true))
+      .addTextDisplayComponents(t => t.setContent('┃  Choose the appropriate category below to open a **private support ticket**.'))
+      .addActionRowComponents(row);
+
+    const files = v2Media(container, 'TICKET', IMAGES.ticket);
+    return {
+      flags: MessageFlags.IsComponentsV2,
+      components: [container],
+      files
+    };
+  }
+
+  const e = embed(
+    '🎟️ Ryvora × Tickets',
+    '━━━━━━━━━━━━━━━━━━━━\n' +
+    '┃ Choose a category below to open a private support ticket.\n\n' +
+    '✦ Our team will help you as soon as possible.'
+  );
   return {
     embeds: [e],
     files: imageFor(e, 'TICKET', IMAGES.ticket),
-    components: [new ActionRowBuilder().addComponents(menu)]
+    components: [row]
   };
 }
 
 function verifyPanel() {
-  const e = embed(
-    '🛡️  Ryvora × Verification',
-    '━━━━━━━━━━━━━━━━━━━━━━━━━━\\n' +
-    '**WELCOME TO RYVORA SHOP**\\n\\n' +
-    'Select the option below to unlock access to the server.\\n' +
-    'Verification is instant when the bot has the correct role permissions.\\n\\n' +
-    '━━━━━━━━━━━━━━━━━━━━━━━━━━\\n' +
-    '✦ Secure access  •  One-click verification'
-  ).setAuthor({ name: 'RYVORA SHOP  •  ACCESS GATEWAY' });
-
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId('ryvora_verify_select')
-    .setPlaceholder('Select an option to gain access...')
-    .addOptions([{
+  const row = makePanelMenu('ryvora_verify_select', 'Select an option to gain access...', [
+    {
       label: 'Verify & Unlock',
       value: 'verify',
       emoji: '✅',
-      description: 'Get your member role'
-    }]);
+      description: 'Unlock access to Ryvora Shop'
+    }
+  ]);
 
+  if (displayV2Available) {
+    const container = new ContainerBuilder()
+      .setAccentColor(CONFIG.purple)
+      .addTextDisplayComponents(t => t.setContent('## 🛡️  Ryvora × Verification'))
+      .addSeparatorComponents(s => s.setDivider(true))
+      .addTextDisplayComponents(t => t.setContent('┃  Select the option below to **access Ryvora Shop**.'))
+      .addActionRowComponents(row);
+    const files = v2Media(container, 'VERIFY', IMAGES.verify);
+    container.addSeparatorComponents(s => s.setDivider(true))
+      .addTextDisplayComponents(t => t.setContent('-# **Ryvora Shop**'));
+    return {
+      flags: MessageFlags.IsComponentsV2,
+      components: [container],
+      files
+    };
+  }
+
+  const e = embed(
+    '🛡️ Ryvora × Verification',
+    '━━━━━━━━━━━━━━━━━━━━\n' +
+    '┃ Select the option below to **access Ryvora Shop**.\n\n' +
+    '**Ryvora Shop**'
+  );
   return {
     embeds: [e],
     files: imageFor(e, 'VERIFY', IMAGES.verify),
-    components: [new ActionRowBuilder().addComponents(menu)]
+    components: [row]
   };
 }
 
@@ -1335,26 +1396,45 @@ async function welcomeMember(member) {
 
   if (!channel) return false;
 
+  const timestamp = Math.floor(Date.now() / 1000);
+  const memberIndex = member.guild.memberCount.toLocaleString('en-US');
+  if (displayV2Available) {
+    const container = new ContainerBuilder()
+      .setAccentColor(CONFIG.purple)
+      .addTextDisplayComponents(t => t.setContent('## 👋  Ryvora Shop™ × WELCOME'))
+      .addSeparatorComponents(s => s.setDivider(true))
+      .addTextDisplayComponents(t => t.setContent(`┃  **HI ${member} — welcome to Ryvora Shop!**`))
+      .addSeparatorComponents(s => s.setDivider(true))
+      .addTextDisplayComponents(t => t.setContent(`┃  You are member **#${memberIndex}**`))
+      .addSeparatorComponents(s => s.setDivider(true))
+      .addTextDisplayComponents(t => t.setContent('┃  Enjoy your stay and explore the community.'))
+      .addSeparatorComponents(s => s.setDivider(true))
+      .addTextDisplayComponents(t => t.setContent('┃  Need help? Open a ticket through our support panel.'))
+      .addSeparatorComponents(s => s.setDivider(true))
+      .addTextDisplayComponents(t => t.setContent(`🗓️ <t:${timestamp}:F>  •  <t:${timestamp}:R>`));
+
+    const files = v2Media(container, 'WELCOME', IMAGES.welcome);
+    await channel.send({
+      flags: MessageFlags.IsComponentsV2,
+      components: [container],
+      files,
+      allowedMentions: { users: [member.id], parse: [] }
+    });
+    return true;
+  }
+
   const e = embed(
     '👋  Ryvora Shop™ × WELCOME',
-    '━━━━━━━━━━━━━━━━━━━━━━━━━━\\n' +
-    `✦  **HI ${member} to Ryvora Shop.**\\n\\n` +
-    `✦  **You are member #${member.guild.memberCount.toLocaleString('en-US')}**\\n\\n` +
-    '✦  **Enjoy your stay and explore the community.**\\n\\n' +
-    '✦  **Need help? Open a ticket from our support panel.**\\n' +
-    '━━━━━━━━━━━━━━━━━━━━━━━━━━\\n' +
-    `🗓️  Joined <t:${Math.floor(Date.now() / 1000)}:F>  •  <t:${Math.floor(Date.now() / 1000)}:R>`
-  ).setAuthor({ name: 'RYVORA SHOP  •  MEMBER ARRIVAL' })
-   .setThumbnail(member.user.displayAvatarURL({ size: 256 }));
-
+    `┃  **HI ${member} — welcome to Ryvora Shop!**\n\n` +
+    `┃  You are member **#${memberIndex}**\n\n` +
+    '┃  Enjoy your stay and explore the community.\n\n' +
+    '┃  Need help? Open a ticket through our support panel.\n\n' +
+    `🗓️  <t:${timestamp}:F>  •  <t:${timestamp}:R>`
+  ).setThumbnail(member.user.displayAvatarURL({ size: 256 }));
   await channel.send({
-    content: `Welcome to Ryvora Shop, ${member}!`,
     embeds: [e],
     files: imageFor(e, 'WELCOME', IMAGES.welcome),
-    allowedMentions: {
-      users: [member.id],
-      parse: []
-    }
+    allowedMentions: { users: [member.id], parse: [] }
   });
 
   return true;
