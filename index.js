@@ -137,7 +137,7 @@ function writableDirectory() {
       log('Writable storage:', dir);
 
       if (dir.startsWith(os.tmpdir())) {
-        logError('Temporary storage in use. Configure a Railway Volume for persistence.');
+        logError('Temporary storage in use. Configure a Railway Volume and RYVORA_DATA_DIR for persistence.');
       }
 
       return dir;
@@ -585,91 +585,62 @@ function makePanelMenu(customId, placeholder, options) {
   );
 }
 
+// RYVORA V3: Discord-native interactive layouts, not a static mockup.
 function ticketPanel() {
-  const row = makePanelMenu(
-    'ryvora_ticket_category',
-    'Choose a ticket category...',
-    Object.entries(CATEGORIES).map(([key, category]) => ({
-      label: category.name,
-      value: key,
-      emoji: category.emoji,
-      description: ({
-        purchase: 'Orders and purchases',
-        pre_sale: 'Questions before buying',
-        support: 'Technical support',
-        hwid_reset: 'Reset assistance',
-        media_reseller: 'Media and reseller requests'
-      })[key] || 'Contact the support team'
-    }))
-  );
-
+  const options = Object.entries(CATEGORIES).map(([key, category]) => ({
+    label: category.name, value: key, emoji: category.emoji,
+    description: ({purchase:'Orders and payments',pre_sale:'Questions before ordering',
+      support:'Technical help',hwid_reset:'Reset requests',
+      media_reseller:'Partnerships and media'})[key]
+  }));
+  const row = makePanelMenu('ryvora_ticket_category', 'Select your support department...', options);
+  const headline = '## 🎟️  RYVORA / SERVICE CONTROL';
+  const intro = '┃ **PRIVATE SUPPORT GATEWAY**\nChoose a department below. Your request will open in a private channel.';
+  const status = '🟢 **Private ticket**  •  🟢 **Staff access**  •  🔒 **One open ticket per member**';
   if (displayV2Available) {
-    const container = new ContainerBuilder()
-      .setAccentColor(CONFIG.purple)
-      .addTextDisplayComponents(t => t.setContent('## 🎟️  Ryvora × Tickets'))
-      .addSeparatorComponents(s => s.setDivider(true))
-      .addTextDisplayComponents(t => t.setContent('┃  Choose the appropriate category below to open a **private support ticket**.'))
-      .addActionRowComponents(row);
-
-    const files = v2Media(container, 'TICKET', IMAGES.ticket);
-    return {
-      flags: MessageFlags.IsComponentsV2,
-      components: [container],
-      files
-    };
+    const panel = new ContainerBuilder().setAccentColor(CONFIG.purple)
+      .addTextDisplayComponents(x=>x.setContent(headline))
+      .addSeparatorComponents(x=>x.setDivider(true))
+      .addTextDisplayComponents(x=>x.setContent(intro))
+      .addTextDisplayComponents(x=>x.setContent('### ◈ SELECT A DEPARTMENT'))
+      .addActionRowComponents(row)
+      .addSeparatorComponents(x=>x.setDivider(true))
+      .addTextDisplayComponents(x=>x.setContent(status));
+    const files = v2Media(panel,'TICKET',IMAGES.ticket);
+    panel.addTextDisplayComponents(x=>x.setContent('-# RYVORA • ULTIMATE METHODS  /  SUPPORT SYSTEM V3'));
+    return {flags:MessageFlags.IsComponentsV2,components:[panel],files};
   }
-
-  const e = embed(
-    '🎟️ Ryvora × Tickets',
-    '━━━━━━━━━━━━━━━━━━━━\n' +
-    '┃ Choose a category below to open a private support ticket.\n\n' +
-    '✦ Our team will help you as soon as possible.'
-  );
-  return {
-    embeds: [e],
-    files: imageFor(e, 'TICKET', IMAGES.ticket),
-    components: [row]
-  };
+  const e=embed('🎟️ RYVORA / SERVICE CONTROL',intro+'\n\n'+status);
+  return {embeds:[e],components:[row],files:imageFor(e,'TICKET',IMAGES.ticket)};
 }
 
 function verifyPanel() {
-  const row = makePanelMenu('ryvora_verify_select', 'Select an option to gain access...', [
-    {
-      label: 'Verify & Unlock',
-      value: 'verify',
-      emoji: '✅',
-      description: 'Unlock access to Ryvora Shop'
-    }
-  ]);
-
-  if (displayV2Available) {
-    const container = new ContainerBuilder()
-      .setAccentColor(CONFIG.purple)
-      .addTextDisplayComponents(t => t.setContent('## 🛡️  Ryvora × Verification'))
-      .addSeparatorComponents(s => s.setDivider(true))
-      .addTextDisplayComponents(t => t.setContent('┃  Select the option below to **access Ryvora Shop**.'))
-      .addActionRowComponents(row);
-    const files = v2Media(container, 'VERIFY', IMAGES.verify);
-    container.addSeparatorComponents(s => s.setDivider(true))
-      .addTextDisplayComponents(t => t.setContent('-# **Ryvora Shop**'));
-    return {
-      flags: MessageFlags.IsComponentsV2,
-      components: [container],
-      files
-    };
+  const button = new ActionRowBuilder().addComponents(new ButtonBuilder()
+    .setCustomId('ryvora_verify').setLabel('Enter Ryvora')
+    .setEmoji('🚪').setStyle(ButtonStyle.Primary));
+  const intro='┃ Verify to unlock the **Ryvora Shop** community and member channels.';
+  const benefits='### 👥 COMMUNITY ACCESS\n💬 Community chat and support\n⭐ Member-only channels\n🎁 Events and giveaways\n🤝 Connect with the community';
+  // Configured means the environment variable exists; runtime permissions are checked when clicked.
+  const configured=idConfigured('VERIFY_ROLE_ID');
+  const status='### ⚡ QUICK ENTRY\n'+
+    `${configured?'🟢':'🟡'} **Role configured:** ${configured?'Yes':'No'}\n`+
+    '🟢 **One-click verification**\n🔒 **No password requested**\n'+
+    '⚙️ **Role assignment:** checked on click';
+  if(displayV2Available){
+    const panel=new ContainerBuilder().setAccentColor(CONFIG.purple)
+      .addTextDisplayComponents(x=>x.setContent('## 🛡️  Ryvora × Verification'))
+      .addSeparatorComponents(x=>x.setDivider(true))
+      .addTextDisplayComponents(x=>x.setContent(intro))
+      .addTextDisplayComponents(x=>x.setContent(benefits))
+      .addSeparatorComponents(x=>x.setDivider(true))
+      .addTextDisplayComponents(x=>x.setContent(status))
+      .addActionRowComponents(button);
+    const files=v2Media(panel,'VERIFY',IMAGES.verify);
+    panel.addTextDisplayComponents(x=>x.setContent('-# RYVORA SHOP  •  ACCESS GATEWAY V3'));
+    return {flags:MessageFlags.IsComponentsV2,components:[panel],files};
   }
-
-  const e = embed(
-    '🛡️ Ryvora × Verification',
-    '━━━━━━━━━━━━━━━━━━━━\n' +
-    '┃ Select the option below to **access Ryvora Shop**.\n\n' +
-    '**Ryvora Shop**'
-  );
-  return {
-    embeds: [e],
-    files: imageFor(e, 'VERIFY', IMAGES.verify),
-    components: [row]
-  };
+  const e=embed('🛡️ Ryvora × Verification',intro+'\n\n'+benefits+'\n\n'+status);
+  return {embeds:[e],components:[button],files:imageFor(e,'VERIFY',IMAGES.verify)};
 }
 
 function productCard(product) {
@@ -1889,11 +1860,11 @@ client.on(Events.InteractionCreate, async i => {
 
   try {
     if (i.isChatInputCommand()) {
-      void audit(i.guild, 'command', 'SLASH COMMAND USED', [
+      safeEvent(audit(i.guild, 'command', 'SLASH COMMAND USED', [
         ['Command', `/${i.commandName}`],
         ['User', `<@${i.user.id}>`],
         ['Channel', `<#${i.channelId}>`]
-      ]);
+      ]));
       const name = i.commandName;
 
       if (name === 'setup' || name === 'verify') {
@@ -2251,6 +2222,9 @@ client.on(Events.GuildBanRemove, b => safeEvent(audit(b.guild, 'moderation', 'BA
 client.on(Events.ChannelCreate, c => safeEvent(audit(c.guild, 'server', 'CHANNEL CREATED', [
   ['Name', c.name], ['ID', c.id]
 ])));
+client.on(Events.ChannelDelete, c => {
+  if (state.tickets[c.id]) { delete state.tickets[c.id]; safeSave(saveState, 'Ticket channel removal'); }
+});
 client.on(Events.ChannelDelete, c => safeEvent(audit(c.guild, 'server', 'CHANNEL DELETED', [
   ['Name', c.name], ['ID', c.id]
 ])));
