@@ -552,27 +552,29 @@ async function logTo(guild, channelId, payload) {
 
 function ticketPanel() {
   const e = embed(
-    '🎫 RYVORA • SUPPORT CENTER',
-    '## PREMIUM SUPPORT\n\n' +
-    '🛒 **Purchase** — Place an order\n' +
-    '❓ **Pre-Sale** — Product questions\n' +
-    '🛠️ **Support** — Technical assistance\n' +
-    '🔑 **HWID Reset** — Reset requests\n' +
-    '📦 **Media / Reseller** — Partnerships\n\n' +
-    '━━━━━━━━━━━━━━━━━━━━\n' +
-    '💜 Select a category below to open a private ticket.'
-  );
+    '🎟️  Ryvora × Tickets',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━\\n' +
+    '**RYVORA  /  PRIVATE SUPPORT**\\n\\n' +
+    'Choose the category that matches your request.\\n' +
+    'Our team will assist you in a private channel.\\n\\n' +
+    Object.values(CATEGORIES).map(c => `${c.emoji}  **${c.name}**`).join('\\n') +
+    '\\n\\n━━━━━━━━━━━━━━━━━━━━━━━━━━\\n' +
+    '✦ One open ticket per member • Please avoid duplicate requests.'
+  ).setAuthor({ name: 'RYVORA SHOP  •  SERVICE DESK' });
 
   const menu = new StringSelectMenuBuilder()
     .setCustomId('ryvora_ticket_category')
-    .setPlaceholder('✦ Choose a support category')
-    .addOptions(
-      Object.entries(CATEGORIES).map(([value, category]) => ({
-        label: category.name,
-        value,
-        emoji: category.emoji
-      }))
-    );
+    .setPlaceholder('Select your ticket category...')
+    .addOptions(Object.entries(CATEGORIES).map(([value, c]) => ({
+      label: c.name, value, emoji: c.emoji,
+      description: {
+        purchase: 'Place an order',
+        pre_sale: 'Questions before buying',
+        support: 'Get technical assistance',
+        hwid_reset: 'Request an HWID reset',
+        media_reseller: 'Media and reseller enquiries'
+      }[value] || 'Contact the team'
+    })));
 
   return {
     embeds: [e],
@@ -583,24 +585,29 @@ function ticketPanel() {
 
 function verifyPanel() {
   const e = embed(
-    '🔐 RYVORA • OFFICIAL VERIFICATION',
-    '## Welcome to Ryvora!\n\n' +
-    '✦ **Step 1** — Read the server rules.\n' +
-    '✦ **Step 2** — Click Verify & Unlock.\n' +
-    '✦ **Step 3** — Receive your member role.\n\n' +
-    '💜 Click below to unlock the server.'
-  );
+    '🛡️  Ryvora × Verification',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━\\n' +
+    '**WELCOME TO RYVORA SHOP**\\n\\n' +
+    'Select the option below to unlock access to the server.\\n' +
+    'Verification is instant when the bot has the correct role permissions.\\n\\n' +
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━\\n' +
+    '✦ Secure access  •  One-click verification'
+  ).setAuthor({ name: 'RYVORA SHOP  •  ACCESS GATEWAY' });
 
-  const button = new ButtonBuilder()
-    .setCustomId('ryvora_verify')
-    .setLabel('Verify & Unlock')
-    .setEmoji('✅')
-    .setStyle(ButtonStyle.Success);
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId('ryvora_verify_select')
+    .setPlaceholder('Select an option to gain access...')
+    .addOptions([{
+      label: 'Verify & Unlock',
+      value: 'verify',
+      emoji: '✅',
+      description: 'Get your member role'
+    }]);
 
   return {
     embeds: [e],
     files: imageFor(e, 'VERIFY', IMAGES.verify),
-    components: [new ActionRowBuilder().addComponents(button)]
+    components: [new ActionRowBuilder().addComponents(menu)]
   };
 }
 
@@ -1329,19 +1336,19 @@ async function welcomeMember(member) {
   if (!channel) return false;
 
   const e = embed(
-    '💜 RYVORA • WELCOME',
-    `Welcome ${member}!\n\n` +
-    '🔐 Verify your account\n' +
-    '🎫 Open a support ticket\n' +
-    '🛒 Explore our products\n' +
-    '🎉 Join giveaways\n\n' +
-    `👥 **Member #${member.guild.memberCount}**`
-  ).setThumbnail(
-    member.user.displayAvatarURL({ size: 256 })
-  );
+    '👋  Ryvora Shop™ × WELCOME',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━\\n' +
+    `✦  **HI ${member} to Ryvora Shop.**\\n\\n` +
+    `✦  **You are member #${member.guild.memberCount.toLocaleString('en-US')}**\\n\\n` +
+    '✦  **Enjoy your stay and explore the community.**\\n\\n' +
+    '✦  **Need help? Open a ticket from our support panel.**\\n' +
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━\\n' +
+    `🗓️  Joined <t:${Math.floor(Date.now() / 1000)}:F>  •  <t:${Math.floor(Date.now() / 1000)}:R>`
+  ).setAuthor({ name: 'RYVORA SHOP  •  MEMBER ARRIVAL' })
+   .setThumbnail(member.user.displayAvatarURL({ size: 256 }));
 
   await channel.send({
-    content: `💜 Welcome ${member}!`,
+    content: `Welcome to Ryvora Shop, ${member}!`,
     embeds: [e],
     files: imageFor(e, 'WELCOME', IMAGES.welcome),
     allowedMentions: {
@@ -2026,6 +2033,11 @@ client.on(Events.InteractionCreate, async i => {
     }
 
     if (i.isStringSelectMenu()) {
+      if (i.customId === 'ryvora_verify_select') {
+        if (i.values[0] !== 'verify') return respond(i, 'Invalid verification option.');
+        return verifyMember(i);
+      }
+
       if (i.customId === 'ryvora_ticket_category') {
         return createTicket(i, i.values[0]);
       }
