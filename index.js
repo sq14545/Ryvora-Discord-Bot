@@ -537,17 +537,25 @@ async function getChannel(guild, id) {
 }
 
 async function logTo(guild, channelId, payload) {
+  if (!/^\d{17,20}$/.test(String(channelId || ''))) return false;
   const channel = await getChannel(guild, channelId);
-  if (!channel) return false;
-
+  if (!channel) {
+    logError('Log destination unavailable:', channelId);
+    return false;
+  }
   try {
-    await channel.send({
-      ...payload,
-      allowedMentions: { parse: [] }
-    });
+    const me = await guild.members.fetchMe();
+    const permissions = channel.permissionsFor(me);
+    if (!permissions?.has(P.ViewChannel) || !permissions.has(P.SendMessages) ||
+        ((payload.embeds?.length || 0) && !permissions.has(P.EmbedLinks)) ||
+        ((payload.files?.length || 0) && !permissions.has(P.AttachFiles))) {
+      logError('Log destination missing permissions:', channelId);
+      return false;
+    }
+    await channel.send({ ...payload, allowedMentions: { parse: [] } });
     return true;
   } catch (error) {
-    logError('Log delivery failed:', error.message);
+    logError(`Log delivery failed for ${channelId}:`, error.message);
     return false;
   }
 }
@@ -1735,7 +1743,7 @@ const commands = [
     .addUserOption(o => o.setName('user').setDescription('Member to inspect')),
   new SlashCommandBuilder().setName('security-test').setDescription('Test one of the nine security log channels')
     .addStringOption(o => o.setName('channel').setDescription('Security log category').setRequired(true)
-      .addChoices(...['nuke','security','link','spam','bot','raid','permission','ban','report'].map(x => ({name:x,value:x}))))
+      .addChoices(...['all','nuke','security','link','spam','bot','raid','permission','ban','report'].map(x => ({name:x,value:x}))))
     .setDefaultMemberPermissions(P.Administrator),
   new SlashCommandBuilder().setName('security-status').setDescription('Check all nine security log channels')
     .setDefaultMemberPermissions(P.Administrator),
@@ -1995,23 +2003,37 @@ async function advancedCommand(i) {
     return respond(i, '❌ You lack the required permission.');
   const me = await i.guild.members.fetchMe();
   if (name === 'security-status') {
-    const lines = [];
-    for (const [kind,id] of Object.entries(SECURITY_CHANNELS)) {
-      const ch = id ? await getChannel(i.guild,id) : null;
-      const perms = ch?.permissionsFor(me);
-      lines.push(`${ch && perms?.has(P.SendMessages) && perms?.has(P.EmbedLinks) ? '🟢' : '🔴'} **${kind}**: ${ch ? `<#${ch.id}>` : 'Not configured / not found'}${ch && !perms?.has(P.SendMessages) ? ' (cannot send)' : ''}`);
-    }
-    return respond(i,{embeds:[embed('🛡️ RYVORA • SECURITY STATUS',lines.join('\n'))]});
+    const checks = await Promise.all(Object.entries(SECURITY_CHANNELS).map(async ([kind, id]) => {
+      const variable = SECURITY_VARIABLES[kind];
+      if (!id) return `🔴 **${kind}**: ${variable} is empty`;
+      if (!/^\d{17,20}$/.test(id)) return `🔴 **${kind}**: Invalid ID format (${variable})`;
+      const channel = await i.guild.channels.fetch(id).catch(() => null);
+      if (!channel) return `🔴 **${kind}**: Channel not found / inaccessible (${variable})`;
+      if (!channel.isTextBased() || typeof channel.send !== 'function')
+        return `🔴 **${kind}**: Not a sendable text channel`;
+      const perms = channel.permissionsFor(me);
+      const missing = [
+        ['View Channel', P.ViewChannel],
+        ['Send Messages', P.SendMessages],
+        ['Embed Links', P.EmbedLinks]
+      ].filter(([, flag]) => !perms?.has(flag)).map(([label]) => label);
+      return missing.length
+        ? `🟠 **${kind}**: <#${id}> — Missing ${missing.join(', ')}`
+        : `🟢 **${kind}**: <#${id}> — READY`;
+    }));
+    return respond(i, { embeds: [embed('🛡️ RYVORA • SECURITY STATUS', checks.join('\n'))] });
   }
   if (name === 'security-test') {
-    const kind = i.options.getString('channel',true);
-    const id = SECURITY_CHANNELS[kind];
-    if (!id) return respond(i, `❌ ${kind} log channel is not configured in Railway.`);
-    const ch = await getChannel(i.guild,id);
-    if (!ch) return respond(i, `❌ ${kind} channel not found / not text based.`);
-    const sent = await logTo(i.guild,id,{embeds:[embed('🧪 SECURITY LOG TEST',
-      `Channel: **${kind}**\nInitiated by: <@${i.user.id}>\nThis is a test, not a real incident.`,CONFIG.green)]});
-    return respond(i,sent ? `✅ Test sent to <#${id}>.` : '❌ Could not send. Check View Channel, Send Messages and Embed Links.');
+    const kind = i.options.getString('channel', true);
+    const selected = kind === 'all' ? Object.keys(SECURITY_CHANNELS) : [kind];
+    const results = [];
+    for (const key of selected) {
+      const id = SECURITY_CHANNELS[key];
+      const sent = id && await logTo(i.guild, id, { embeds: [embed('🧪 SECURITY LOG TEST',
+        `Category: **${key}**\nInitiated by: <@${i.user.id}>\nTest message — not a real incident.`, CONFIG.green)] });
+      results.push(`${sent ? '🟢' : '🔴'} **${key}**: ${sent ? 'Delivered' : 'Failed — check /security-status'}`);
+    }
+    return respond(i, { embeds: [embed('🧪 SECURITY DELIVERY RESULTS', results.join('\n'))] });
   }
   if (name === 'userinfo') {
     const user = i.options.getUser('user') || i.user;
@@ -2504,6 +2526,13 @@ client.on(Events.InviteDelete, invite => safeEvent(audit(invite.guild, 'security
 // ======================================================
 // RYVORA SECURITY V6 — native moderation and audit protection
 // ======================================================
+const SECURITY_VARIABLES = Object.freeze({
+  nuke: 'ANTI_NUKE_LOG_CHANNEL_ID', security: 'SECURITY_LOG_CHANNEL_ID',
+  link: 'ANTI_LINK_LOG_CHANNEL_ID', spam: 'ANTI_SPAM_LOG_CHANNEL_ID',
+  bot: 'ANTI_BOT_LOG_CHANNEL_ID', raid: 'ANTI_RAID_LOG_CHANNEL_ID',
+  permission: 'PERMISSION_LOG_CHANNEL_ID', ban: 'AUTO_BAN_LOG_CHANNEL_ID',
+  report: 'SECURITY_REPORTS_CHANNEL_ID'
+});
 const SECURITY_CHANNELS = Object.freeze({
   nuke: envId('ANTI_NUKE_LOG_CHANNEL_ID'),
   security: envId('SECURITY_LOG_CHANNEL_ID'),
@@ -2519,7 +2548,7 @@ const SECURITY = {
   logChannel: SECURITY_CHANNELS.nuke || CONFIG.securityLogChannel,
   exempt: new Set((process.env.SECURITY_TRUSTED_IDS || '').split(',').map(x => x.trim()).filter(x => /^\d{17,20}$/.test(x))),
   linksAllowed: new Set((process.env.SECURITY_ALLOWED_DOMAINS || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean)),
-  actions: new Map(), messages: new Map(), joins: [],
+  actions: new Map(), messages: new Map(), joins: new Map(), alertCooldowns: new Map(),
   destructive: new Map([
     [AuditLogEvent.ChannelDelete, ['Channel deletion', 2]],
     [AuditLogEvent.RoleDelete, ['Role deletion', 2]],
@@ -2537,15 +2566,19 @@ function securityTrusted(guild, id) {
 async function securityNotice(guild, title, detail, color = CONFIG.red, kind = 'security') {
   log('[SECURITY]', kind, title, detail);
   const e = embed(`🛡️ RYVORA SECURITY | ${title}`, String(detail).slice(0, 3800), color);
-  const primary = SECURITY_CHANNELS[kind] || SECURITY_CHANNELS.security || SECURITY.logChannel;
-  const sent = await logTo(guild, primary, { embeds: [e] });
-  if (!sent && primary !== SECURITY_CHANNELS.security && SECURITY_CHANNELS.security)
-    await logTo(guild, SECURITY_CHANNELS.security, { embeds: [e] });
-  else if (sent && kind !== 'security' && SECURITY_CHANNELS.security && primary !== SECURITY_CHANNELS.security)
-    await logTo(guild, SECURITY_CHANNELS.security, { embeds: [e] });
-  if (kind !== 'report' && SECURITY_CHANNELS.report && SECURITY_CHANNELS.report !== primary)
-    await logTo(guild, SECURITY_CHANNELS.report, { embeds: [e] });
-  return sent;
+  const primary = SECURITY_CHANNELS[kind] || SECURITY_CHANNELS.security || SECURITY_CHANNELS.nuke;
+  const destinations = [...new Set([
+    primary,
+    kind !== 'security' ? SECURITY_CHANNELS.security : null,
+    kind !== 'report' ? SECURITY_CHANNELS.report : null
+  ].filter(Boolean))];
+  let delivered = false;
+  for (const id of destinations) {
+    const sent = await logTo(guild, id, { embeds: [e] });
+    delivered ||= sent;
+  }
+  if (!delivered) logError('Security alert undelivered:', kind, title);
+  return delivered;
 }
 async function securityReport(guild, title, detail) {
   return securityNotice(guild, title, detail, CONFIG.purple, 'report');
@@ -2570,14 +2603,27 @@ function securityWindow(map, key, duration) {
 client.on(Events.GuildAuditLogEntryCreate, (entry, guild) => safeEvent((async () => {
   if (!auditGuild(guild) || !SECURITY.destructive.has(entry.action)) return;
   const executorId = entry.executorId;
+  if (!executorId) return;
   if (securityTrusted(guild, executorId)) return;
   const [label, limit] = SECURITY.destructive.get(entry.action);
+  if (entry.action === AuditLogEvent.RoleUpdate) {
+    const dangerous = [P.Administrator, P.ManageGuild, P.ManageRoles, P.ManageWebhooks, P.BanMembers];
+    const permissionChange = entry.changes?.find(change => change.key === 'permissions');
+    if (!permissionChange || !dangerous.some(flag => {
+      try {
+        const oldFlags = BigInt(permissionChange.old || '0');
+        const newFlags = BigInt(permissionChange.new || '0');
+        return (newFlags & flag) !== 0n && (oldFlags & flag) === 0n;
+      } catch { return false; }
+    })) return;
+  }
   if ([AuditLogEvent.RoleUpdate, AuditLogEvent.ChannelUpdate].includes(entry.action)) {
     await securityNotice(guild, 'PERMISSION / CHANNEL CHANGE',
       `Executor: <@${executorId}>\nAction: ${label}\nTarget: ${entry.targetId || 'unknown'}`,
       CONFIG.purple, 'permission');
   }
 
+  if ([AuditLogEvent.RoleUpdate, AuditLogEvent.ChannelUpdate].includes(entry.action)) return;
   const count = securityWindow(SECURITY.actions, `${guild.id}:${executorId}:${entry.action}`, 12000);
   // Bot additions are always unauthorized unless the executor is explicitly trusted.
   if (entry.action === AuditLogEvent.BotAdd) {
@@ -2603,7 +2649,7 @@ const SECURITY_LINK = /(?:https?:\/\/|www\.|discord\.gg\/|discord(?:app)?\.com\/
 client.on(Events.MessageCreate, message => safeEvent((async () => {
   if (!auditGuild(message.guild) || message.author.bot || !message.member) return;
   if (securityTrusted(message.guild, message.author.id) || message.member.permissions.has(P.Administrator)) return;
-  const key = `${message.guildId}:${message.author.id}`;
+  const key = `${message.guildId}:${message.channelId}:${message.author.id}`;
   const count = securityWindow(SECURITY.messages, key, 7000);
   const urls = [...message.content.matchAll(SECURITY_LINK)].map(m=>m[0]);
   const blocked = urls.some(url => {
@@ -2614,20 +2660,32 @@ client.on(Events.MessageCreate, message => safeEvent((async () => {
   });
   const mentionSpam = (message.mentions.users.size + message.mentions.roles.size) >= 6 || message.mentions.everyone;
   if (!blocked && count < 7 && !mentionSpam) return;
+  const category = blocked ? 'link' : 'spam';
+  const alertKey = `${category}:${key}`;
+  const lastAlert = SECURITY.alertCooldowns.get(alertKey) || 0;
+  const shouldAlert = Date.now() - lastAlert >= 12000;
+  if (shouldAlert) SECURITY.alertCooldowns.set(alertKey, Date.now());
+  if (SECURITY.alertCooldowns.size > 10000) {
+    for (const [k, t] of SECURITY.alertCooldowns) {
+      if (Date.now() - t > 60000) SECURITY.alertCooldowns.delete(k);
+    }
+  }
   if (message.deletable) await message.delete().catch(()=>{});
   let response = 'message deleted';
   if (count >= 10 || mentionSpam) {
     try { if (message.member.moderatable) { await message.member.timeout(10*60*1000, 'Ryvora Security: spam'); response += ', timed out 10m'; } }
     catch(err) { response += `, timeout failed: ${err.message}`; }
   }
-  await securityNotice(message.guild, 'MESSAGE PROTECTION', `Member: <@${message.author.id}>\nChannel: <#${message.channelId}>\nReason: ${blocked?'blocked link':mentionSpam?'mass mentions':'message flood'}\nResponse: ${response}`, CONFIG.purple, blocked ? 'link' : 'spam');
+  if (shouldAlert) await securityNotice(message.guild, 'MESSAGE PROTECTION', `Member: <@${message.author.id}>\nChannel: <#${message.channelId}>\nReason: ${blocked?'blocked link':mentionSpam?'mass mentions':'message flood'}\nResponse: ${response}`, CONFIG.purple, category);
 })()));
 client.on(Events.GuildMemberAdd, member => safeEvent((async () => {
   if (!auditGuild(member.guild)) return;
   const now = Date.now();
-  SECURITY.joins = SECURITY.joins.filter(t => now-t < 15000);
-  SECURITY.joins.push(now);
-  if (SECURITY.joins.length === 12) await securityNotice(member.guild, 'POSSIBLE JOIN RAID', '12 members joined within 15 seconds. Review Server Settings > Safety Setup and enable Discord AutoMod / verification.', CONFIG.red, 'raid');
+  const joins = (SECURITY.joins.get(member.guild.id) || []).filter(t => now - t < 15000);
+  joins.push(now);
+  SECURITY.joins.set(member.guild.id, joins);
+  if (joins.length === 12) await securityNotice(member.guild, 'POSSIBLE JOIN RAID',
+    '12 members joined within 15 seconds. Review Server Settings > Safety Setup and enable Discord AutoMod / verification.', CONFIG.red, 'raid');
 })()));
 
 // ======================================================
@@ -2695,6 +2753,8 @@ client.once(Events.ClientReady, async () => {
   log('Verification system:', idConfigured('VERIFY_ROLE_ID') ? 'configured' : 'missing configuration');
   log('Invite system ready.');
   log('Image system ready.');
+  const configuredLogs = Object.entries(SECURITY_CHANNELS).filter(([, id]) => /^\d{17,20}$/.test(id)).length;
+  log(`Security log destinations configured: ${configuredLogs}/9 (run /security-status to verify permissions)`);
   log('All Ryvora systems initialized.');
 });
 
