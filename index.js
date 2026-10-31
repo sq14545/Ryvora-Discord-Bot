@@ -1704,6 +1704,41 @@ async function refreshGiveaway(guild) {
 // ======================================================
 
 const commands = [
+
+  new SlashCommandBuilder().setName('ban').setDescription('Ban a member (Administrator only)')
+    .addUserOption(o => o.setName('user').setDescription('Member to ban').setRequired(true))
+    .addStringOption(o => o.setName('reason').setDescription('Reason').setMaxLength(400))
+    .setDefaultMemberPermissions(P.Administrator),
+  new SlashCommandBuilder().setName('kick').setDescription('Kick a member (Administrator only)')
+    .addUserOption(o => o.setName('user').setDescription('Member to kick').setRequired(true))
+    .addStringOption(o => o.setName('reason').setDescription('Reason').setMaxLength(400))
+    .setDefaultMemberPermissions(P.Administrator),
+  new SlashCommandBuilder().setName('timeout').setDescription('Timeout a member')
+    .addUserOption(o => o.setName('user').setDescription('Member').setRequired(true))
+    .addIntegerOption(o => o.setName('minutes').setDescription('1 to 40320 minutes').setMinValue(1).setMaxValue(40320).setRequired(true))
+    .addStringOption(o => o.setName('reason').setDescription('Reason').setMaxLength(400))
+    .setDefaultMemberPermissions(P.ModerateMembers),
+  new SlashCommandBuilder().setName('untimeout').setDescription('Remove a member timeout')
+    .addUserOption(o => o.setName('user').setDescription('Member').setRequired(true))
+    .setDefaultMemberPermissions(P.ModerateMembers),
+  new SlashCommandBuilder().setName('purge').setDescription('Delete recent messages in this channel')
+    .addIntegerOption(o => o.setName('amount').setDescription('2-100 recent messages').setMinValue(2).setMaxValue(100).setRequired(true))
+    .setDefaultMemberPermissions(P.ManageMessages),
+  new SlashCommandBuilder().setName('lock').setDescription('Lock this text channel for @everyone')
+    .setDefaultMemberPermissions(P.ManageChannels),
+  new SlashCommandBuilder().setName('unlock').setDescription('Unlock this text channel for @everyone')
+    .setDefaultMemberPermissions(P.ManageChannels),
+  new SlashCommandBuilder().setName('slowmode').setDescription('Set channel slowmode in seconds')
+    .addIntegerOption(o => o.setName('seconds').setDescription('0 to 21600').setMinValue(0).setMaxValue(21600).setRequired(true))
+    .setDefaultMemberPermissions(P.ManageChannels),
+  new SlashCommandBuilder().setName('userinfo').setDescription('Show member details')
+    .addUserOption(o => o.setName('user').setDescription('Member to inspect')),
+  new SlashCommandBuilder().setName('security-test').setDescription('Test one of the nine security log channels')
+    .addStringOption(o => o.setName('channel').setDescription('Security log category').setRequired(true)
+      .addChoices(...['nuke','security','link','spam','bot','raid','permission','ban','report'].map(x => ({name:x,value:x}))))
+    .setDefaultMemberPermissions(P.Administrator),
+  new SlashCommandBuilder().setName('security-status').setDescription('Check all nine security log channels')
+    .setDefaultMemberPermissions(P.Administrator),
   new SlashCommandBuilder()
     .setName('setup')
     .setDescription('Post the Ryvora ticket panel')
@@ -1949,6 +1984,89 @@ client.on(Events.GuildMemberRemove, async member => {
   }
 });
 
+async function advancedCommand(i) {
+  if (!await defer(i)) return;
+  const name = i.commandName;
+  const adminOnly = ['ban','kick','security-test','security-status'];
+  if (adminOnly.includes(name) && !isAdmin(i)) return respond(i, '❌ Administrator required.');
+  const required = {timeout:P.ModerateMembers,untimeout:P.ModerateMembers,
+    purge:P.ManageMessages,lock:P.ManageChannels,unlock:P.ManageChannels,slowmode:P.ManageChannels};
+  if (required[name] && !i.memberPermissions?.has(required[name]))
+    return respond(i, '❌ You lack the required permission.');
+  const me = await i.guild.members.fetchMe();
+  if (name === 'security-status') {
+    const lines = [];
+    for (const [kind,id] of Object.entries(SECURITY_CHANNELS)) {
+      const ch = id ? await getChannel(i.guild,id) : null;
+      const perms = ch?.permissionsFor(me);
+      lines.push(`${ch && perms?.has(P.SendMessages) && perms?.has(P.EmbedLinks) ? '🟢' : '🔴'} **${kind}**: ${ch ? `<#${ch.id}>` : 'Not configured / not found'}${ch && !perms?.has(P.SendMessages) ? ' (cannot send)' : ''}`);
+    }
+    return respond(i,{embeds:[embed('🛡️ RYVORA • SECURITY STATUS',lines.join('\n'))]});
+  }
+  if (name === 'security-test') {
+    const kind = i.options.getString('channel',true);
+    const id = SECURITY_CHANNELS[kind];
+    if (!id) return respond(i, `❌ ${kind} log channel is not configured in Railway.`);
+    const ch = await getChannel(i.guild,id);
+    if (!ch) return respond(i, `❌ ${kind} channel not found / not text based.`);
+    const sent = await logTo(i.guild,id,{embeds:[embed('🧪 SECURITY LOG TEST',
+      `Channel: **${kind}**\nInitiated by: <@${i.user.id}>\nThis is a test, not a real incident.`,CONFIG.green)]});
+    return respond(i,sent ? `✅ Test sent to <#${id}>.` : '❌ Could not send. Check View Channel, Send Messages and Embed Links.');
+  }
+  if (name === 'userinfo') {
+    const user = i.options.getUser('user') || i.user;
+    const member = await i.guild.members.fetch(user.id).catch(()=>null);
+    return respond(i,{embeds:[embed('👤 RYVORA • USER INFO',
+      `**User:** <@${user.id}>\n**ID:** ${user.id}\n**Created:** <t:${Math.floor(user.createdTimestamp/1000)}:F>\n**Joined:** ${member?.joinedTimestamp ? `<t:${Math.floor(member.joinedTimestamp/1000)}:F>` : 'Not in server'}\n**Roles:** ${member?.roles.cache.size ? member.roles.cache.size-1 : 0}`)]});
+  }
+  if (['ban','kick','timeout','untimeout'].includes(name)) {
+    const user = i.options.getUser('user',true);
+    const target = await i.guild.members.fetch(user.id).catch(()=>null);
+    if (user.id === i.guild.ownerId || user.id === i.client.user.id || user.id === i.user.id)
+      return respond(i,'❌ Protected target (owner, bot or yourself).');
+    if (target && i.user.id !== i.guild.ownerId && target.roles.highest.position >= i.member.roles.highest.position)
+      return respond(i,'❌ Target has an equal or higher role.');
+    const reason = i.options.getString('reason') || `Ryvora moderation by ${i.user.id}`;
+    try {
+      if (name === 'ban') {
+        if (!me.permissions.has(P.BanMembers) || (target && !target.bannable))
+          return respond(i,'❌ Bot cannot ban this user. Check Ban Members and role hierarchy.');
+        await i.guild.members.ban(user.id,{reason,deleteMessageSeconds:0});
+      } else if (name === 'kick') {
+        if (!target || !target.kickable || !me.permissions.has(P.KickMembers))
+          return respond(i,'❌ Bot cannot kick this member. Check role hierarchy.');
+        await target.kick(reason);
+      } else {
+        if (!target || !target.moderatable || !me.permissions.has(P.ModerateMembers))
+          return respond(i,'❌ Bot cannot timeout this member.');
+        await target.timeout(name === 'untimeout' ? null : i.options.getInteger('minutes',true)*60000,reason);
+      }
+      await audit(i.guild,'moderation',`MODERATION ${name.toUpperCase()}`,[
+        ['Target',`<@${user.id}>`],['Moderator',`<@${i.user.id}>`],['Reason',reason]]);
+      return respond(i,`✅ **${name}** completed for <@${user.id}>.`);
+    } catch(error) { logError('Moderation action failed:',error); return respond(i,`❌ ${name} failed: ${error.message.slice(0,200)}`); }
+  }
+  const ch=i.channel;
+  if (!ch || ch.type !== ChannelType.GuildText) return respond(i,'❌ This command requires a text channel.');
+  try {
+    if (name === 'purge') {
+      if (!me.permissionsIn(ch).has(P.ManageMessages)) return respond(i,'❌ Bot needs Manage Messages.');
+      const deleted=await ch.bulkDelete(i.options.getInteger('amount',true),true);
+      await audit(i.guild,'moderation','MESSAGES PURGED', [['Channel',ch.name],['Count',String(deleted.size)],['By',`<@${i.user.id}>`]]);
+      return respond(i,`✅ Deleted ${deleted.size} recent messages (messages older than 14 days are skipped).`);
+    }
+    if (!me.permissionsIn(ch).has(P.ManageChannels)) return respond(i,'❌ Bot needs Manage Channels.');
+    if (name === 'lock' || name === 'unlock') {
+      await ch.permissionOverwrites.edit(i.guild.roles.everyone,{SendMessages:name==='lock'?false:null},
+        {reason:`Ryvora ${name} by ${i.user.id}`});
+    } else if (name === 'slowmode') {
+      await ch.setRateLimitPerUser(i.options.getInteger('seconds',true),`Ryvora slowmode by ${i.user.id}`);
+    }
+    await audit(i.guild,'moderation',`CHANNEL ${name.toUpperCase()}`,[['Channel',ch.name],['By',`<@${i.user.id}>`]]);
+    return respond(i,`✅ ${name} completed in ${ch}.`);
+  } catch(error) { logError('Channel moderation failed:',error); return respond(i,`❌ ${name} failed: ${error.message.slice(0,200)}`); }
+}
+
 // ======================================================
 // INTERACTION ROUTER
 // ======================================================
@@ -1969,6 +2087,9 @@ client.on(Events.InteractionCreate, async i => {
         ['Channel', `<#${i.channelId}>`]
       ]));
       const name = i.commandName;
+
+      if (['ban','kick','timeout','untimeout','purge','lock','unlock','slowmode',
+        'userinfo','security-test','security-status'].includes(name)) return advancedCommand(i);
 
       if (name === 'setup' || name === 'verify') {
         if (!await defer(i)) return;
@@ -2383,8 +2504,19 @@ client.on(Events.InviteDelete, invite => safeEvent(audit(invite.guild, 'security
 // ======================================================
 // RYVORA SECURITY V6 — native moderation and audit protection
 // ======================================================
+const SECURITY_CHANNELS = Object.freeze({
+  nuke: envId('ANTI_NUKE_LOG_CHANNEL_ID'),
+  security: envId('SECURITY_LOG_CHANNEL_ID'),
+  link: envId('ANTI_LINK_LOG_CHANNEL_ID'),
+  spam: envId('ANTI_SPAM_LOG_CHANNEL_ID'),
+  bot: envId('ANTI_BOT_LOG_CHANNEL_ID'),
+  raid: envId('ANTI_RAID_LOG_CHANNEL_ID'),
+  permission: envId('PERMISSION_LOG_CHANNEL_ID'),
+  ban: envId('AUTO_BAN_LOG_CHANNEL_ID'),
+  report: envId('SECURITY_REPORTS_CHANNEL_ID')
+});
 const SECURITY = {
-  logChannel: envId('ANTI_NUKE_LOG_CHANNEL_ID') || CONFIG.securityLogChannel,
+  logChannel: SECURITY_CHANNELS.nuke || CONFIG.securityLogChannel,
   exempt: new Set((process.env.SECURITY_TRUSTED_IDS || '').split(',').map(x => x.trim()).filter(x => /^\d{17,20}$/.test(x))),
   linksAllowed: new Set((process.env.SECURITY_ALLOWED_DOMAINS || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean)),
   actions: new Map(), messages: new Map(), joins: [],
@@ -2402,10 +2534,21 @@ const SECURITY = {
 function securityTrusted(guild, id) {
   return !id || id === guild.ownerId || id === client.user?.id || SECURITY.exempt.has(id);
 }
-async function securityNotice(guild, title, detail, color = CONFIG.red) {
-  log('[SECURITY]', title, detail);
+async function securityNotice(guild, title, detail, color = CONFIG.red, kind = 'security') {
+  log('[SECURITY]', kind, title, detail);
   const e = embed(`🛡️ RYVORA SECURITY | ${title}`, String(detail).slice(0, 3800), color);
-  await logTo(guild, SECURITY.logChannel, {embeds:[e]});
+  const primary = SECURITY_CHANNELS[kind] || SECURITY_CHANNELS.security || SECURITY.logChannel;
+  const sent = await logTo(guild, primary, { embeds: [e] });
+  if (!sent && primary !== SECURITY_CHANNELS.security && SECURITY_CHANNELS.security)
+    await logTo(guild, SECURITY_CHANNELS.security, { embeds: [e] });
+  else if (sent && kind !== 'security' && SECURITY_CHANNELS.security && primary !== SECURITY_CHANNELS.security)
+    await logTo(guild, SECURITY_CHANNELS.security, { embeds: [e] });
+  if (kind !== 'report' && SECURITY_CHANNELS.report && SECURITY_CHANNELS.report !== primary)
+    await logTo(guild, SECURITY_CHANNELS.report, { embeds: [e] });
+  return sent;
+}
+async function securityReport(guild, title, detail) {
+  return securityNotice(guild, title, detail, CONFIG.purple, 'report');
 }
 async function securityBan(guild, id, reason) {
   if (securityTrusted(guild, id)) return 'exempt';
@@ -2413,7 +2556,7 @@ async function securityBan(guild, id, reason) {
   const target = await guild.members.fetch(id).catch(() => null);
   if (!me.permissions.has(P.BanMembers)) return 'missing Ban Members permission';
   if (target && !target.bannable) return 'cannot ban (role hierarchy / permissions)';
-  try { await guild.members.ban(id, {reason:reason.slice(0, 450), deleteMessageSeconds:0}); return 'banned'; }
+  try { await guild.members.ban(id, {reason:reason.slice(0, 450), deleteMessageSeconds:0}); await securityNotice(guild, 'AUTOMATIC BAN', `User: <@${id}>\nReason: ${reason}`, CONFIG.red, 'ban'); return 'banned'; }
   catch (err) { return `ban failed: ${err.message}`; }
 }
 function securityWindow(map, key, duration) {
@@ -2429,6 +2572,12 @@ client.on(Events.GuildAuditLogEntryCreate, (entry, guild) => safeEvent((async ()
   const executorId = entry.executorId;
   if (securityTrusted(guild, executorId)) return;
   const [label, limit] = SECURITY.destructive.get(entry.action);
+  if ([AuditLogEvent.RoleUpdate, AuditLogEvent.ChannelUpdate].includes(entry.action)) {
+    await securityNotice(guild, 'PERMISSION / CHANNEL CHANGE',
+      `Executor: <@${executorId}>\nAction: ${label}\nTarget: ${entry.targetId || 'unknown'}`,
+      CONFIG.purple, 'permission');
+  }
+
   const count = securityWindow(SECURITY.actions, `${guild.id}:${executorId}:${entry.action}`, 12000);
   // Bot additions are always unauthorized unless the executor is explicitly trusted.
   if (entry.action === AuditLogEvent.BotAdd) {
@@ -2441,14 +2590,14 @@ client.on(Events.GuildAuditLogEntryCreate, (entry, guild) => safeEvent((async ()
       catch (err) { result=`Bot removal failed: ${err.message}`; }
     }
     const punishment = await securityBan(guild, executorId, 'Ryvora Security: unauthorized bot addition');
-    return securityNotice(guild, 'UNAUTHORIZED BOT', `Executor: <@${executorId}>\nBot: ${botId}\nResponse: ${result}\nExecutor: ${punishment}`);
+    return securityNotice(guild, 'UNAUTHORIZED BOT', `Executor: <@${executorId}>\nBot: ${botId}\nResponse: ${result}\nExecutor: ${punishment}`, CONFIG.red, 'bot');
   }
   if (count < limit) return;
   const guardKey = `${guild.id}:${executorId}`;
   if (SECURITY.actions.get(`punished:${guardKey}`)?.[0] > Date.now()-60000) return;
   SECURITY.actions.set(`punished:${guardKey}`, [Date.now()]);
   const punishment = await securityBan(guild, executorId, `Ryvora Security: ${count} ${label} events in 12s`);
-  await securityNotice(guild, 'ANTI-NUKE TRIGGERED', `Executor: <@${executorId}> (${executorId})\nAction: ${label}\nCount: ${count} in 12 seconds\nResponse: ${punishment}\nDeleted resources cannot be fully restored automatically.`);
+  await securityNotice(guild, 'ANTI-NUKE TRIGGERED', `Executor: <@${executorId}> (${executorId})\nAction: ${label}\nCount: ${count} in 12 seconds\nResponse: ${punishment}\nDeleted resources cannot be fully restored automatically.`, CONFIG.red, 'nuke');
 })()));
 const SECURITY_LINK = /(?:https?:\/\/|www\.|discord\.gg\/|discord(?:app)?\.com\/invite\/)[^\s<>]+/ig;
 client.on(Events.MessageCreate, message => safeEvent((async () => {
@@ -2471,14 +2620,14 @@ client.on(Events.MessageCreate, message => safeEvent((async () => {
     try { if (message.member.moderatable) { await message.member.timeout(10*60*1000, 'Ryvora Security: spam'); response += ', timed out 10m'; } }
     catch(err) { response += `, timeout failed: ${err.message}`; }
   }
-  await securityNotice(message.guild, 'MESSAGE PROTECTION', `Member: <@${message.author.id}>\nChannel: <#${message.channelId}>\nReason: ${blocked?'blocked link':mentionSpam?'mass mentions':'message flood'}\nResponse: ${response}`, CONFIG.purple);
+  await securityNotice(message.guild, 'MESSAGE PROTECTION', `Member: <@${message.author.id}>\nChannel: <#${message.channelId}>\nReason: ${blocked?'blocked link':mentionSpam?'mass mentions':'message flood'}\nResponse: ${response}`, CONFIG.purple, blocked ? 'link' : 'spam');
 })()));
 client.on(Events.GuildMemberAdd, member => safeEvent((async () => {
   if (!auditGuild(member.guild)) return;
   const now = Date.now();
   SECURITY.joins = SECURITY.joins.filter(t => now-t < 15000);
   SECURITY.joins.push(now);
-  if (SECURITY.joins.length === 12) await securityNotice(member.guild, 'POSSIBLE JOIN RAID', '12 members joined within 15 seconds. Review Server Settings > Safety Setup and enable Discord AutoMod / verification.');
+  if (SECURITY.joins.length === 12) await securityNotice(member.guild, 'POSSIBLE JOIN RAID', '12 members joined within 15 seconds. Review Server Settings > Safety Setup and enable Discord AutoMod / verification.', CONFIG.red, 'raid');
 })()));
 
 // ======================================================
